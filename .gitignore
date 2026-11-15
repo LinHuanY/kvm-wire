@@ -39,3 +39,5 @@ host/relay.json
 _scratch/
 
 *.spec
+
+kvm-wire.json

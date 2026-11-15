@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """ESP32-S3 KVM 图形控制台。
 
 启动后自动扫描局域网内的设备，选中后点“连接”，确认后才开始注入。
@@ -14,9 +14,30 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
+import pystray
+import sv_ttk
+from PIL import Image
+
 import kvmproto
 from discovery import DiscoveredDevice, LanDiscovery
 from kvm_agent import AgentConfig, KvmAgent
+
+
+import json
+
+
+def gui_config_path() -> Path:
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent / "kvm-wire.json"
+    return Path(__file__).resolve().parent.parent / "kvm-wire.json"
+
+
+def resource_path(rel: str) -> Path:
+    base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
+    for cand in (base / rel, Path(__file__).resolve().parent.parent / rel):
+        if cand.exists():
+            return cand
+    return base / rel
 
 
 def default_ca_path() -> str:
@@ -48,6 +69,10 @@ class KvmApp:
         self.last_rtt: float | None = None
 
         self._build_ui()
+        self._apply_config_file()
+        self._quitting = False
+        self.tray = None
+        self._setup_tray()
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         self.root.after(200, self.scan_devices)
         self.root.after(400, self.update_status)
@@ -58,7 +83,7 @@ class KvmApp:
     def _build_ui(self) -> None:
         style = ttk.Style()
         try:
-            style.theme_use("vista")
+            style.configure("Treeview", rowheight=26)
         except tk.TclError:
             pass
 
@@ -67,7 +92,8 @@ class KvmApp:
 
         header = ttk.Frame(outer)
         header.pack(fill="x")
-        ttk.Label(header, text="ESP32-S3 键鼠桥", font=("Segoe UI", 15, "bold")).pack(side="left")
+        ttk.Label(header, text="KVM-Wire", font=("Segoe UI", 20, "bold")).pack(side="left")
+        ttk.Label(header, text="蓝牙键鼠 · 网络 KVM", foreground="#666").pack(side="left", padx=(10, 0))
         self.scan_state = ttk.Label(header, text="正在扫描局域网…", foreground="#666")
         self.scan_state.pack(side="right")
 
@@ -251,6 +277,26 @@ class KvmApp:
         self.btn_scan.config(state="disabled" if (connected or self.scanning) else "normal")
         self.btn_relay.config(state="disabled" if connected else "normal")
 
+
+    def _apply_config_file(self) -> None:
+        path = gui_config_path()
+        if not path.exists():
+            return
+        try:
+            cfg = json.loads(path.read_text(encoding="utf-8-sig"))
+        except Exception:  # noqa: BLE001
+            return
+        self.var_relay_host.set(str(cfg.get("relay_host", "")))
+        self.var_relay_port.set(str(cfg.get("relay_port", 8790)))
+        self.var_relay_key.set(str(cfg.get("relay_key", "")))
+        self.var_relay_device.set(str(cfg.get("device_id", "")))
+        self.var_e2e.set(str(cfg.get("pair_code", "")))
+        ca = cfg.get("ca") or default_ca_path()
+        self.var_relay_ca.set(str(ca))
+        self.hint.set("已读取 kvm-wire.json，可点“连接中继”")
+        if cfg.get("auto_connect"):
+            self.root.after(1500, lambda: self.connect_relay(False))
+
     def browse_ca(self) -> None:
         path = filedialog.askopenfilename(title="选择中继 CA 证书", filetypes=[("证书", "*.crt *.pem"), ("全部", "*.*")])
         if path:
@@ -300,7 +346,7 @@ class KvmApp:
         self._start_agent(cfg)
         self.hint.set(f"已连接 {device.addr}，键鼠操作已注入本机。")
 
-    def connect_relay(self) -> None:
+    def connect_relay(self, confirm: bool = True) -> None:
         if self.agent is not None:
             return
         host = self.var_relay_host.get().strip()
@@ -323,7 +369,7 @@ class KvmApp:
             messagebox.showerror("CA 证书错误", "找不到 CA 证书，请选择中继服务器生成的 ca.crt")
             return
         device_id = self.var_relay_device.get().strip() or None
-        if not messagebox.askyesno(
+        if confirm and not messagebox.askyesno(
             "确认连接中继",
             f"中继：{host}:{port}\n设备：{device_id or '自动选择第一台'}\n\n"
             "连接后，蓝牙键鼠的操作会注入到本机（当前前台窗口）。\n确定开始吗？",
@@ -413,16 +459,66 @@ class KvmApp:
         self.root.after(400, self.update_status)
 
     def on_close(self) -> None:
+        if getattr(self, "_quitting", False):
+            return
+        self.root.withdraw()
+        if self.tray is not None:
+            try:
+                self.tray.notify("KVM-Wire 仍在后台运行，右键托盘图标可退出", "KVM-Wire")
+            except Exception:  # noqa: BLE001
+                pass
+
+    # ------------------------------------------------------------------
+    # 托盘
+    # ------------------------------------------------------------------
+    def _setup_tray(self) -> None:
+        image = None
+        try:
+            image = Image.open(resource_path("assets/icon.png")).resize((64, 64))
+        except Exception:  # noqa: BLE001
+            image = Image.new("RGB", (64, 64), (30, 90, 200))
+        menu = pystray.Menu(
+            pystray.MenuItem("显示主窗口", self._tray_show, default=True),
+            pystray.MenuItem("退出", self._tray_quit),
+        )
+        self.tray = pystray.Icon("KVM-Wire", image, "KVM-Wire", menu)
+        try:
+            self.tray.run_detached()
+        except Exception:  # noqa: BLE001
+            self.tray = None
+
+    def _tray_show(self, _icon=None, _item=None) -> None:
+        self.root.after(0, self._show_window)
+
+    def _show_window(self) -> None:
+        self.root.deiconify()
+        self.root.lift()
+        self.root.focus_force()
+
+    def _tray_quit(self, _icon=None, _item=None) -> None:
+        self.root.after(0, self._quit_app)
+
+    def _quit_app(self) -> None:
+        self._quitting = True
         try:
             if self.agent is not None:
                 self.agent.stop()
         finally:
-            self.discovery.close()
+            try:
+                self.discovery.close()
+            except Exception:  # noqa: BLE001
+                pass
+            if self.tray is not None:
+                try:
+                    self.tray.stop()
+                except Exception:  # noqa: BLE001
+                    pass
             self.root.destroy()
 
 
 def main() -> int:
     root = tk.Tk()
+    sv_ttk.set_theme("light")
     KvmApp(root)
     root.mainloop()
     return 0
@@ -430,4 +526,5 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
 
