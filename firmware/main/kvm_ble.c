@@ -80,8 +80,60 @@ static conn_slot_t s_conns[KVM_BLE_MAX_CONNS];
 
 static void wl_add(const uint8_t bda[6], uint8_t addr_type)
 {
-    esp_ble_wl_addr_type_t t = (addr_type == 0) ? BLE_WL_ADDR_TYPE_PUBLIC : BLE_WL_ADDR_TYPE_RANDOM;
-    esp_ble_gap_update_whitelist(true, (uint8_t *)bda, t);
+    (void)addr_type;
+    /* 同一个地址同时按 public/random 加入，避免保存的地址类型与实际广播不一致 */
+    esp_ble_gap_update_whitelist(true, (uint8_t *)bda, BLE_WL_ADDR_TYPE_PUBLIC);
+    esp_ble_gap_update_whitelist(true, (uint8_t *)bda, BLE_WL_ADDR_TYPE_RANDOM);
+}
+
+#define BOND_CACHE_MAX 16
+static uint8_t s_bond_bdas[BOND_CACHE_MAX][6];
+static uint8_t s_bond_types[BOND_CACHE_MAX];
+static int s_bond_count;
+
+static void bond_cache_refresh(void)
+{
+    int n = esp_ble_get_bond_device_num();
+    if (n <= 0) {
+        s_bond_count = 0;
+        return;
+    }
+    if (n > BOND_CACHE_MAX) {
+        n = BOND_CACHE_MAX;
+    }
+    esp_ble_bond_dev_t list[BOND_CACHE_MAX];
+    if (esp_ble_get_bond_device_list(&n, list) != ESP_OK) {
+        s_bond_count = 0;
+        return;
+    }
+    s_bond_count = n;
+    for (int i = 0; i < n; i++) {
+        memcpy(s_bond_bdas[i], list[i].bd_addr, 6);
+        s_bond_types[i] = (uint8_t)list[i].bd_addr_type;
+        wl_add(s_bond_bdas[i], s_bond_types[i]);
+    }
+    ESP_LOGI(TAG, "BLE 绑定设备缓存: %d 台", n);
+}
+
+static int bond_type(const uint8_t bda[6], uint8_t *out_type)
+{
+    for (int i = 0; i < s_bond_count; i++) {
+        if (memcmp(s_bond_bdas[i], bda, 6) == 0) {
+            *out_type = s_bond_types[i];
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static bool bond_match(const uint8_t bda[6])
+{
+    for (int i = 0; i < s_bond_count; i++) {
+        if (memcmp(s_bond_bdas[i], bda, 6) == 0) {
+            return true;
+        }
+    }
+    return false;
 }
 
 static void wl_sync(void)
@@ -99,8 +151,8 @@ static esp_ble_scan_params_t s_scan_params = {
     .scan_type = BLE_SCAN_TYPE_ACTIVE,
     .own_addr_type = BLE_ADDR_TYPE_PUBLIC,
     .scan_filter_policy = BLE_SCAN_FILTER_ALLOW_ALL,
-    .scan_interval = 0x50,
-    .scan_window = 0x30,
+    .scan_interval = 0x60,
+    .scan_window = 0x60,
     .scan_duplicate = BLE_SCAN_DUPLICATE_ENABLE,
 };
 
@@ -322,6 +374,7 @@ static void hidh_callback(void *handler_args, esp_event_base_t base, int32_t id,
         if (slot && cls) {
             kvm_config_add_device(bda, slot->addr_type, cls);
         wl_add(bda, slot->addr_type);
+        bond_cache_refresh();
         }
         ESP_LOGI(TAG, "设备类型推断: %u", cls);
         size_t nmaps = 0;
@@ -672,14 +725,14 @@ static void auto_connect_task(void *arg)
             continue;
         }
         int64_t now = esp_timer_get_time() / 1000;
-        if (now - s_auto_last_scan_ms < 15000) {
+        if (now - s_auto_last_scan_ms < 8000) {
             vTaskDelay(pdMS_TO_TICKS(1000));
             continue;
         }
         s_auto_last_scan_ms = now;
         static int empty_wl;
         bool use_wl = empty_wl < 3;
-        if (kvm_ble_scan_start_ex(4000, use_wl) != ESP_OK) {
+        if (kvm_ble_scan_start_ex(5000, use_wl) != ESP_OK) {
             vTaskDelay(pdMS_TO_TICKS(3000));
             continue;
         }
@@ -688,9 +741,19 @@ static void auto_connect_task(void *arg)
         int n = kvm_ble_scan_get(devs, KVM_BLE_MAX_SCAN);
         if (use_wl) {
             empty_wl = (n == 0) ? empty_wl + 1 : 0;
+            if (n > 0) {
+                char b[18];
+                ESP_LOGI(TAG, "白名单扫描: %d 台，首个 %s (%s) rssi=%d", n,
+                         devs[0].name[0] ? devs[0].name : "?", bda_str(devs[0].bda, b), devs[0].rssi);
+            }
         }
         for (int i = 0; i < n; i++) {
-            bool saved = kvm_config_has_device(devs[i].bda);
+            bool saved = kvm_config_has_device(devs[i].bda) || bond_match(devs[i].bda);
+            if (i < 3) {
+                char dbg[18];
+                ESP_LOGI(TAG, "候选[%d] %s known=%d rssi=%d", i,
+                         devs[i].name[0] ? devs[i].name : "?", (int)saved, devs[i].rssi);
+            }
             if (devs[i].rssi < -90 || devs[i].rssi == 0) {
                 continue;
             }
@@ -702,7 +765,12 @@ static void auto_connect_task(void *arg)
             ESP_LOGI(TAG, "自动重连%s %s (%s)", saved ? "(已保存)" : "(按名字)", devs[i].name,
                      bda_str(devs[i].bda, addr));
             auto_mark_tried(devs[i].bda, now);
-            kvm_ble_connect(devs[i].bda, devs[i].addr_type);
+            uint8_t conn_type = devs[i].addr_type;
+            uint8_t bt = 0;
+            if (bond_type(devs[i].bda, &bt)) {
+                conn_type = bt;
+            }
+            kvm_ble_connect(devs[i].bda, conn_type);
             vTaskDelay(pdMS_TO_TICKS(7000));
             break;
         }
@@ -740,6 +808,7 @@ void kvm_ble_start(void)
 
     ESP_ERROR_CHECK(esp_ble_gap_set_device_name("KVM-Bridge"));
     ESP_ERROR_CHECK(esp_ble_gap_register_callback(gap_event_handler));
+    bond_cache_refresh();
     wl_sync();
 
     ble_set_security();
