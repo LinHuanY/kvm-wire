@@ -31,6 +31,7 @@ typedef struct {
 void kvm_ble_start(void);
 
 esp_err_t kvm_ble_scan_start(uint32_t duration_ms);
+esp_err_t kvm_ble_scan_start_ex(uint32_t duration_ms, bool whitelist);
 bool kvm_ble_scanning(void);
 int kvm_ble_scan_get(kvm_ble_scan_dev_t *out, int max);
 

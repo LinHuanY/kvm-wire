@@ -1,4 +1,4 @@
-/*
+﻿/*
  * BLE HID Host：扫描 BLE 键鼠 -> 连接 -> 解析 HID 报告 -> 交给 kvm_input。
  * 使用 Bluedroid + esp_hid 组件（CONFIG_BT_BLE_ENABLED）。
  */
@@ -49,6 +49,7 @@ typedef struct {
     uint8_t bda[6];
     uint8_t addr_type;
     uint32_t duration_ms;
+    bool whitelist;
 } ble_msg_t;
 
 typedef struct {
@@ -76,6 +77,20 @@ static int s_scan_count;
 static bool s_scanning;
 
 static conn_slot_t s_conns[KVM_BLE_MAX_CONNS];
+
+static void wl_add(const uint8_t bda[6], uint8_t addr_type)
+{
+    esp_ble_wl_addr_type_t t = (addr_type == 0) ? BLE_WL_ADDR_TYPE_PUBLIC : BLE_WL_ADDR_TYPE_RANDOM;
+    esp_ble_gap_update_whitelist(true, (uint8_t *)bda, t);
+}
+
+static void wl_sync(void)
+{
+    for (uint8_t i = 0; i < g_cfg.dev_count; i++) {
+        wl_add(g_cfg.devs[i].bda, g_cfg.devs[i].addr_type);
+    }
+    ESP_LOGI(TAG, "BLE 白名单同步: %u 台已保存设备", g_cfg.dev_count);
+}
 static volatile bool s_connecting;
 static uint8_t s_report_class[256]; /* report_id -> KVM_CLASS_*，用于 usage 解析不到时兜底 */
 static int s_input_logs;
@@ -306,6 +321,7 @@ static void hidh_callback(void *handler_args, esp_event_base_t base, int32_t id,
         }
         if (slot && cls) {
             kvm_config_add_device(bda, slot->addr_type, cls);
+        wl_add(bda, slot->addr_type);
         }
         ESP_LOGI(TAG, "设备类型推断: %u", cls);
         size_t nmaps = 0;
@@ -661,16 +677,21 @@ static void auto_connect_task(void *arg)
             continue;
         }
         s_auto_last_scan_ms = now;
-        if (kvm_ble_scan_start(4000) != ESP_OK) {
+        static int empty_wl;
+        bool use_wl = empty_wl < 3;
+        if (kvm_ble_scan_start_ex(4000, use_wl) != ESP_OK) {
             vTaskDelay(pdMS_TO_TICKS(3000));
             continue;
         }
         vTaskDelay(pdMS_TO_TICKS(5200));
         kvm_ble_scan_dev_t devs[KVM_BLE_MAX_SCAN];
         int n = kvm_ble_scan_get(devs, KVM_BLE_MAX_SCAN);
+        if (use_wl) {
+            empty_wl = (n == 0) ? empty_wl + 1 : 0;
+        }
         for (int i = 0; i < n; i++) {
             bool saved = kvm_config_has_device(devs[i].bda);
-            if (devs[i].rssi < -75 || devs[i].rssi == 0) {
+            if (devs[i].rssi < -90 || devs[i].rssi == 0) {
                 continue;
             }
             if (!(saved || auto_name_match(devs[i].name)) || auto_already_connected(devs[i].bda) ||
@@ -719,6 +740,7 @@ void kvm_ble_start(void)
 
     ESP_ERROR_CHECK(esp_ble_gap_set_device_name("KVM-Bridge"));
     ESP_ERROR_CHECK(esp_ble_gap_register_callback(gap_event_handler));
+    wl_sync();
 
     ble_set_security();
 
@@ -763,6 +785,8 @@ static void ble_worker(void *arg)
             xSemaphoreGive(s_lock);
 
             esp_ble_gap_stop_scanning();
+            s_scan_params.scan_filter_policy = msg.whitelist ? BLE_SCAN_FILTER_ALLOW_ONLY_WLST
+                                                             : BLE_SCAN_FILTER_ALLOW_ALL;
             esp_ble_gap_set_scan_params(&s_scan_params);
             xSemaphoreTake(s_scan_param_sem, pdMS_TO_TICKS(2000));
             uint32_t sec = (msg.duration_ms + 999) / 1000;
@@ -855,7 +879,7 @@ static void ble_worker(void *arg)
 /* 对外接口                                                            */
 /* ------------------------------------------------------------------ */
 
-esp_err_t kvm_ble_scan_start(uint32_t duration_ms)
+esp_err_t kvm_ble_scan_start_ex(uint32_t duration_ms, bool whitelist)
 {
     if (!s_queue) {
         return ESP_ERR_INVALID_STATE;
@@ -868,6 +892,11 @@ esp_err_t kvm_ble_scan_start(uint32_t duration_ms)
         return ESP_ERR_TIMEOUT;
     }
     return ESP_OK;
+}
+
+esp_err_t kvm_ble_scan_start(uint32_t duration_ms)
+{
+    return kvm_ble_scan_start_ex(duration_ms, false);
 }
 
 bool kvm_ble_scanning(void)
@@ -963,4 +992,5 @@ bool kvm_ble_any_connected(void)
 {
     return kvm_ble_conn_count() > 0;
 }
+
 
