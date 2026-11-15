@@ -1,4 +1,4 @@
-# KVM-Wire
+﻿# KVM-Wire
 
 把蓝牙键鼠变成网络 KVM：ESP32-S3 作为 BLE HID Host 连接蓝牙键盘/鼠标，通过 WiFi
 把输入转发给 PC，PC 端注入为真实键鼠。支持**局域网直连**和**广域网 TLS 中继**。
@@ -10,7 +10,7 @@
 ## 特性
 
 - **BLE HID Host**：ESP32-S3 直接连接 BLE 键盘/鼠标（Bluedroid + esp_hid）
-- **免改代码配网**：设备开一个开放热点 `KVM-Setup-XXXX`，网页里填 WiFi、连键鼠、配中继
+- **免改代码配网**：设备开一个开放热点 `KVM-Setup-XXXX`，连上自动弹出配置页；网页里填 WiFi、连键鼠、配中继
 - **局域网自动发现**：PC 端 UDP 广播发现设备，点击确认即可连接
 - **广域网中继**：设备和 PC 都主动连 TLS 中继，按 device_id 配对，穿透 NAT
 - **Windows 注入**：`SendInput` + 绝对坐标跟踪，支持多显示器、滚轮、横向滚动、按键重复
@@ -157,3 +157,4 @@ python simulate.py --serve          # 无硬件时模拟设备
 ## License
 
 MIT，见 [LICENSE](LICENSE)。
+

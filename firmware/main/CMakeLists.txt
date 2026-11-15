@@ -1,8 +1,4 @@
-if(NOT EXISTS "${CMAKE_CURRENT_LIST_DIR}/relay_ca.pem")
-    configure_file("${CMAKE_CURRENT_LIST_DIR}/relay_ca.pem.example" "${CMAKE_CURRENT_LIST_DIR}/relay_ca.pem" COPYONLY)
-endif()
-
-idf_component_register(
+﻿idf_component_register(
     SRCS
         "app_main.c"
         "kvm_config.c"
@@ -11,6 +7,7 @@ idf_component_register(
         "kvm_ble.c"
         "kvm_net.c"
         "kvm_wan.c"
+        "kvm_captive.c"
         "kvm_http.c"
     INCLUDE_DIRS "."
     EMBED_FILES "index.html"
@@ -28,3 +25,4 @@ idf_component_register(
         esp_hid
         driver
 )
+

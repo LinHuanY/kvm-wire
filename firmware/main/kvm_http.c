@@ -129,6 +129,15 @@ static esp_err_t h_favicon(httpd_req_t *req)
     return httpd_resp_send(req, NULL, 0);
 }
 
+/* 强制门户探测：统一 302 到配置页，触发手机/电脑的“需要登录”提示 */
+static esp_err_t h_portal(httpd_req_t *req)
+{
+    httpd_resp_set_status(req, "302 Found");
+    httpd_resp_set_hdr(req, "Location", "http://192.168.4.1/");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    return httpd_resp_send(req, NULL, 0);
+}
+
 /* ------------------------------------------------------------------ */
 /* 状态                                                                */
 /* ------------------------------------------------------------------ */
@@ -492,9 +501,10 @@ static esp_err_t h_system(httpd_req_t *req)
 void kvm_http_start(void)
 {
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
-    cfg.max_uri_handlers = 16;
+    cfg.max_uri_handlers = 24;
     cfg.lru_purge_enable = true;
     cfg.stack_size = 8192;
+    cfg.uri_match_fn = httpd_uri_match_wildcard;
 
     httpd_handle_t server = NULL;
     if (httpd_start(&server, &cfg) != ESP_OK) {
@@ -516,6 +526,18 @@ void kvm_http_start(void)
         {.uri = "/api/ble/connect", .method = HTTP_POST, .handler = h_ble_connect},
         {.uri = "/api/ble/disconnect", .method = HTTP_POST, .handler = h_ble_disconnect},
         {.uri = "/api/system", .method = HTTP_POST, .handler = h_system},
+        /* Captive Portal 探测地址（Windows / Android / iOS / Firefox） */
+        {.uri = "/generate_204", .method = HTTP_GET, .handler = h_portal},
+        {.uri = "/gen_204", .method = HTTP_GET, .handler = h_portal},
+        {.uri = "/hotspot-detect.html", .method = HTTP_GET, .handler = h_portal},
+        {.uri = "/library/test/success.html", .method = HTTP_GET, .handler = h_portal},
+        {.uri = "/connecttest.txt", .method = HTTP_GET, .handler = h_portal},
+        {.uri = "/ncsi.txt", .method = HTTP_GET, .handler = h_portal},
+        {.uri = "/success.txt", .method = HTTP_GET, .handler = h_portal},
+        {.uri = "/redirect", .method = HTTP_GET, .handler = h_portal},
+        {.uri = "/canonical.html", .method = HTTP_GET, .handler = h_portal},
+        /* 兜底：任何未知 GET 都跳到配置页 */
+        {.uri = "/*", .method = HTTP_GET, .handler = h_portal},
     };
     for (size_t i = 0; i < sizeof(routes) / sizeof(routes[0]); i++) {
         httpd_register_uri_handler(server, &routes[i]);

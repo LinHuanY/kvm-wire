@@ -165,6 +165,16 @@ void kvm_wifi_start(void)
     /* 关掉省电，鼠标延迟更稳定 */
     esp_wifi_set_ps(WIFI_PS_NONE);
 
+    /* 让 AP 客户端把 DNS 指向设备，配合 DNS 劫持实现强制门户 */
+    if (s_ap_netif != NULL) {
+        esp_netif_ip_info_t ap_ip;
+        if (esp_netif_get_ip_info(s_ap_netif, &ap_ip) == ESP_OK) {
+            esp_netif_dhcps_stop(s_ap_netif);
+            esp_netif_dhcps_option(s_ap_netif, ESP_NETIF_OP_SET, ESP_NETIF_DOMAIN_NAME_SERVER,
+                                   &ap_ip.ip, sizeof(ap_ip.ip));
+            esp_netif_dhcps_start(s_ap_netif);
+        }
+    }
     ESP_LOGI(TAG, "AP 已启动: SSID=%s  http://192.168.4.1/", kvm_config_ap_ssid());
     if (g_cfg.sta_ssid[0] == '\0') {
         ESP_LOGW(TAG, "未配置家庭 WiFi，仅 AP 模式（可先连 AP 再在网页里配置）");

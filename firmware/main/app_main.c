@@ -1,4 +1,4 @@
-/*
+﻿/*
  * ESP32-S3 蓝牙键鼠 -> 局域网 -> PC 注入端
  *
  * 启动流程：
@@ -21,6 +21,7 @@
 #include "kvm_config.h"
 #include "kvm_http.h"
 #include "kvm_input.h"
+#include "kvm_captive.h"
 #include "kvm_net.h"
 #include "kvm_wan.h"
 #include "kvm_wifi.h"
@@ -143,6 +144,7 @@ void app_main(void)
     led_init();
 
     kvm_wifi_start();
+    kvm_captive_start();
     kvm_ble_start();
     kvm_net_start();
     kvm_wan_start();
@@ -154,3 +156,4 @@ void app_main(void)
 
     ESP_LOGI(TAG, "配置热点: %s   打开 http://192.168.4.1/", kvm_config_ap_ssid());
 }
+
