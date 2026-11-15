@@ -1,4 +1,4 @@
-﻿menu "KVM Bridge 配置"
+menu "KVM Bridge 配置"
 
     config KVM_AP_SSID_PREFIX
         string "AP 热点名称前缀"
@@ -52,7 +52,7 @@
 
     config KVM_DEFAULT_RELAY_HOST
         string "广域网中继地址"
-        default ""
+        default "101.96.204.31"
 
     config KVM_DEFAULT_RELAY_PORT
         int "广域网中继端口"
@@ -71,15 +71,17 @@
             可以关闭此项再试。
 
     config KVM_BLE_AUTO_RECONNECT
-        bool "键鼠断开后按名字自动重连"
-        default y
+        bool "键鼠断开后按名字自动重连（实验性，可能触发 BLE 崩溃）"
+        default n
         help
-            当没有键鼠连接时每 15 秒扫描一次，只连接名字匹配的设备；
-            不使用旧地址，避免随机地址失效导致连接阻塞。
+            开启后，当没有键鼠连接时每 15 秒扫描一次，只连接名字匹配的设备。
+            不用旧地址，避免随机地址失效导致连接阻塞。
 
     config KVM_BLE_AUTO_NAMES
         string "自动重连的设备名关键字（逗号分隔）"
         default "RK-100,BT5.2"
+        help
+            设备名包含任一关键字就会自动连接，例如 "RK-100,BT5.2,Keychron"。
 
     config KVM_STATUS_LED_GPIO
         int "状态 LED GPIO（-1 表示不用）"

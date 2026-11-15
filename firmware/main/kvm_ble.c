@@ -32,6 +32,10 @@
 
 static const char *TAG = "kvm_ble";
 
+#ifndef CONFIG_KVM_BLE_AUTO_RECONNECT
+#define CONFIG_KVM_BLE_AUTO_RECONNECT 0
+#endif
+
 #define HID_SVC_UUID16 0x1812
 
 typedef enum {
