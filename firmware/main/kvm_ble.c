@@ -76,6 +76,7 @@ static int s_scan_count;
 static bool s_scanning;
 
 static conn_slot_t s_conns[KVM_BLE_MAX_CONNS];
+static volatile bool s_connecting;
 static uint8_t s_report_class[256]; /* report_id -> KVM_CLASS_*，用于 usage 解析不到时兜底 */
 static int s_input_logs;
 
@@ -650,7 +651,7 @@ static void auto_connect_task(void *arg)
     (void)arg;
     vTaskDelay(pdMS_TO_TICKS(12000));
     while (1) {
-        if (!CONFIG_KVM_BLE_AUTO_RECONNECT || kvm_ble_conn_count() >= 2) {
+        if (!CONFIG_KVM_BLE_AUTO_RECONNECT || s_connecting || kvm_ble_conn_count() >= 2) {
             vTaskDelay(pdMS_TO_TICKS(5000));
             continue;
         }
@@ -669,6 +670,9 @@ static void auto_connect_task(void *arg)
         int n = kvm_ble_scan_get(devs, KVM_BLE_MAX_SCAN);
         for (int i = 0; i < n; i++) {
             bool saved = kvm_config_has_device(devs[i].bda);
+            if (devs[i].rssi < -75 || devs[i].rssi == 0) {
+                continue;
+            }
             if (!(saved || auto_name_match(devs[i].name)) || auto_already_connected(devs[i].bda) ||
                 auto_tried_recent(devs[i].bda, now)) {
                 continue;
@@ -727,8 +731,8 @@ void kvm_ble_start(void)
     };
     ESP_ERROR_CHECK(esp_hidh_init(&hidh_cfg));
 
-    xTaskCreate(ble_worker, "ble_worker", 6144, NULL, 5, NULL);
-    xTaskCreate(auto_connect_task, "ble_auto", 4096, NULL, 3, NULL);
+    xTaskCreate(ble_worker, "ble_worker", 10240, NULL, 5, NULL);
+    xTaskCreate(auto_connect_task, "ble_auto", 6144, NULL, 3, NULL);
 
     ESP_LOGI(TAG, "BLE HID Host 已初始化");
 
@@ -795,7 +799,9 @@ static void ble_worker(void *arg)
                 break;
             }
             ESP_LOGI(TAG, "正在连接 %s ...", bda_str(msg.bda, addr));
+            s_connecting = true;
             esp_hidh_dev_t *dev = esp_hidh_dev_open((uint8_t *)msg.bda, ESP_HID_TRANSPORT_BLE, msg.addr_type);
+            s_connecting = false;
             if (dev == NULL) {
                 ESP_LOGE(TAG, "连接 %s 失败", bda_str(msg.bda, addr));
                 break;
