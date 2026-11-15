@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 #include "esp_bt.h"
 #include "esp_bt_device.h"
@@ -565,6 +566,119 @@ static void ble_set_security(void)
 
 static void ble_worker(void *arg);
 
+/* ------------------------------------------------------------------ */
+/* 按名字自动重连                                                      */
+/* ------------------------------------------------------------------ */
+static int64_t s_auto_last_scan_ms;
+static int s_auto_tried_idx;
+
+typedef struct {
+    uint8_t bda[6];
+    int64_t t_ms;
+} auto_tried_t;
+static auto_tried_t s_auto_tried[8];
+
+static bool contains_ci(const char *hay, const char *needle)
+{
+    size_t n = strlen(needle);
+    if (n == 0 || hay == NULL) {
+        return false;
+    }
+    for (const char *p = hay; *p; p++) {
+        if (strncasecmp(p, needle, n) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool auto_name_match(const char *name)
+{
+    if (name == NULL || name[0] == '\0') {
+        return false;
+    }
+    char buf[96];
+    strlcpy(buf, CONFIG_KVM_BLE_AUTO_NAMES, sizeof(buf));
+    char *save = NULL;
+    for (char *tok = strtok_r(buf, ",", &save); tok != NULL; tok = strtok_r(NULL, ",", &save)) {
+        while (*tok == ' ') {
+            tok++;
+        }
+        if (contains_ci(name, tok)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool auto_already_connected(const uint8_t bda[6])
+{
+    kvm_ble_conn_t conns[KVM_BLE_MAX_CONNS];
+    int n = kvm_ble_conn_get(conns, KVM_BLE_MAX_CONNS);
+    for (int i = 0; i < n; i++) {
+        if (memcmp(conns[i].bda, bda, 6) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool auto_tried_recent(const uint8_t bda[6], int64_t now_ms)
+{
+    for (int i = 0; i < 8; i++) {
+        if (memcmp(s_auto_tried[i].bda, bda, 6) == 0 && now_ms - s_auto_tried[i].t_ms < 120000) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static void auto_mark_tried(const uint8_t bda[6], int64_t now_ms)
+{
+    auto_tried_t *t = &s_auto_tried[s_auto_tried_idx];
+    s_auto_tried_idx = (s_auto_tried_idx + 1) % 8;
+    memcpy(t->bda, bda, 6);
+    t->t_ms = now_ms;
+}
+
+static void auto_connect_task(void *arg)
+{
+    (void)arg;
+    vTaskDelay(pdMS_TO_TICKS(12000));
+    while (1) {
+        if (!CONFIG_KVM_BLE_AUTO_RECONNECT || kvm_ble_conn_count() >= 2) {
+            vTaskDelay(pdMS_TO_TICKS(5000));
+            continue;
+        }
+        int64_t now = esp_timer_get_time() / 1000;
+        if (now - s_auto_last_scan_ms < 15000) {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            continue;
+        }
+        s_auto_last_scan_ms = now;
+        if (kvm_ble_scan_start(4000) != ESP_OK) {
+            vTaskDelay(pdMS_TO_TICKS(3000));
+            continue;
+        }
+        vTaskDelay(pdMS_TO_TICKS(5200));
+        kvm_ble_scan_dev_t devs[KVM_BLE_MAX_SCAN];
+        int n = kvm_ble_scan_get(devs, KVM_BLE_MAX_SCAN);
+        for (int i = 0; i < n; i++) {
+            if (!auto_name_match(devs[i].name) || auto_already_connected(devs[i].bda) ||
+                auto_tried_recent(devs[i].bda, now)) {
+                continue;
+            }
+            char addr[18];
+            ESP_LOGI(TAG, "自动重连 %s (%s)", devs[i].name, bda_str(devs[i].bda, addr));
+            auto_mark_tried(devs[i].bda, now);
+            kvm_ble_connect(devs[i].bda, devs[i].addr_type);
+            vTaskDelay(pdMS_TO_TICKS(7000));
+            break;
+        }
+        vTaskDelay(pdMS_TO_TICKS(2000));
+    }
+}
+
 void kvm_ble_start(void)
 {
     /* 排查 HID 通知订阅问题：打开 esp_hid 的调试日志 */
@@ -608,14 +722,13 @@ void kvm_ble_start(void)
     ESP_ERROR_CHECK(esp_hidh_init(&hidh_cfg));
 
     xTaskCreate(ble_worker, "ble_worker", 6144, NULL, 5, NULL);
+    xTaskCreate(auto_connect_task, "ble_auto", 4096, NULL, 3, NULL);
 
     ESP_LOGI(TAG, "BLE HID Host 已初始化");
 
-    /* 注意：不再自动连接 NVS 里保存的设备。
-     * BLE 键鼠普遍使用随机私有地址（RPA），保存的是当时的地址，重启后会失效，
-     * 而 esp_hidh_dev_open() 对不可达地址会长时间阻塞，导致 BLE worker 卡死、
-     * 之后网页点“连接”也毫无反应。请每次通过网页扫描后手动连接。 */
-    ESP_LOGI(TAG, "就绪：请在网页里扫描并连接键鼠（已禁用开机自动重连）");
+    /* 键鼠休眠断开后，由 ble_auto 任务按名字定期扫描并重连；
+     * 不直接用 NVS 里的旧地址，避免 RPA 失效导致 esp_hidh_dev_open 长时间阻塞。 */
+    ESP_LOGI(TAG, "就绪：键鼠可网页手动连接，也会按名字自动重连");
 }
 
 /* ------------------------------------------------------------------ */
