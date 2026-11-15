@@ -31,6 +31,7 @@ typedef struct {
     uint16_t relay_port;
     char relay_key[80];
     char e2e_key[65]; /* 端到端加密密钥，空=关闭 */
+    char web_pass[33]; /* 网页管理密码，空=不需要登录 */
     uint8_t dev_count;
     kvm_saved_dev_t devs[KVM_MAX_SAVED_DEVS];
 } kvm_config_t;

@@ -53,6 +53,7 @@ void kvm_config_load(void)
     g_cfg.relay_port = CONFIG_KVM_DEFAULT_RELAY_PORT;
     strlcpy(g_cfg.relay_key, CONFIG_KVM_DEFAULT_RELAY_KEY, sizeof(g_cfg.relay_key));
     g_cfg.e2e_key[0] = '\0';
+    g_cfg.web_pass[0] = '\0';
 
     nvs_handle_t h;
     esp_err_t err = nvs_open(NVS_NS, NVS_READONLY, &h);
@@ -122,6 +123,10 @@ void kvm_config_load(void)
     if (nvs_get_str(h, "e2ekey", g_cfg.e2e_key, &len) != ESP_OK) {
         g_cfg.e2e_key[0] = '\0';
     }
+    len = sizeof(g_cfg.web_pass);
+    if (nvs_get_str(h, "webpass", g_cfg.web_pass, &len) != ESP_OK) {
+        g_cfg.web_pass[0] = '\0';
+    }
     nvs_close(h);
 
     ESP_LOGI(TAG, "配置: sta_ssid='%s' host=%s:%u token=%016llx devs=%u",
@@ -150,6 +155,7 @@ esp_err_t kvm_config_save(void)
     nvs_set_u16(h, "rport", g_cfg.relay_port);
     nvs_set_str(h, "rkey", g_cfg.relay_key);
     nvs_set_str(h, "e2ekey", g_cfg.e2e_key);
+    nvs_set_str(h, "webpass", g_cfg.web_pass);
     err = nvs_commit(h);
     nvs_close(h);
     if (err == ESP_OK) {

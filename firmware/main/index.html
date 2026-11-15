@@ -123,6 +123,19 @@
   </section>
 
   <section class="card">
+    <h2>网页管理密码</h2>
+    <div class="row"><label>状态</label><span id="webpass-state" class="muted">未启用</span></div>
+    <div class="row"><label>新密码</label>
+      <input id="webpass" type="password" placeholder="4~32 位，设置后打开网页需登录" autocomplete="new-password">
+    </div>
+    <div class="actions">
+      <button class="primary" onclick="saveWebPass()">设置密码</button>
+      <button onclick="clearWebPass()">清除密码</button>
+    </div>
+    <p class="muted">用户名固定为 <code>admin</code>。忘记密码可通过串口恢复出厂设置。</p>
+  </section>
+
+  <section class="card">
     <h2>蓝牙键鼠</h2>
     <div class="actions">
       <button class="primary" onclick="scanBle()">扫描蓝牙设备</button>
@@ -211,6 +224,7 @@ async function refreshStatus() {
       }
       if (!s.wan.key_set) text += '（未设置设备密钥）';
       if (s.wan.pair_code) $('pair-code').value = s.wan.pair_code;
+      $('webpass-state').textContent = s.wan.web_pass_set ? '已启用（用户名 admin）' : '未启用';
       $('wan-state').textContent = text;
       if (!wanInit) {
         wanInit = true;
@@ -312,6 +326,26 @@ async function regenPair() {
     $('pair-code').value = r.pair_code || '';
     toast('已生成新的配对码');
   } catch (e) { toast('生成失败: ' + e.message); }
+}
+
+
+async function saveWebPass() {
+  const pw = $('webpass').value;
+  if (pw.length < 4) { toast('密码至少 4 位'); return; }
+  try {
+    const r = await api('/api/webpass', 'POST', { password: pw });
+    $('webpass').value = '';
+    $('webpass-state').textContent = r.enabled ? '已启用（用户名 admin）' : '未启用';
+    toast('密码已设置，下次打开需要登录');
+  } catch (e) { toast('设置失败: ' + e.message); }
+}
+async function clearWebPass() {
+  if (!confirm('清除后任何人连上热点都能打开配置页，确定吗？')) return;
+  try {
+    const r = await api('/api/webpass', 'POST', { clear: true });
+    $('webpass-state').textContent = r.enabled ? '已启用' : '未启用';
+    toast('已清除网页密码');
+  } catch (e) { toast('清除失败: ' + e.message); }
 }
 
 async function saveWan() {

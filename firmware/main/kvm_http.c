@@ -19,6 +19,7 @@
 #include "kvm_config.h"
 #include "kvm_input.h"
 #include "kvm_crypto.h"
+#include "mbedtls/base64.h"
 #include "esp_random.h"
 #include "kvm_net.h"
 #include "kvm_proto.h"
@@ -29,6 +30,9 @@
 
 static const char *TAG = "kvm_http";
 
+static bool auth_ok(httpd_req_t *req);
+static esp_err_t auth_required(httpd_req_t *req);
+#define REQUIRE_AUTH(req) do { if (!auth_ok(req)) return auth_required(req); } while (0)
 extern const uint8_t index_html_start[] asm("_binary_index_html_start");
 extern const uint8_t index_html_end[] asm("_binary_index_html_end");
 
@@ -119,6 +123,7 @@ static void addr_to_str(const uint8_t bda[6], char out[18])
 
 static esp_err_t h_index(httpd_req_t *req)
 {
+    REQUIRE_AUTH(req);
     httpd_resp_set_type(req, "text/html; charset=utf-8");
     httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
     httpd_resp_set_hdr(req, "Connection", "close");
@@ -130,6 +135,44 @@ static esp_err_t h_favicon(httpd_req_t *req)
     httpd_resp_set_status(req, "204 No Content");
     return httpd_resp_send(req, NULL, 0);
 }
+
+
+/* ------------------------------------------------------------------ */
+/* 网页管理密码（HTTP Basic Auth）                                      */
+/* ------------------------------------------------------------------ */
+static bool auth_ok(httpd_req_t *req)
+{
+    if (g_cfg.web_pass[0] == '\0') {
+        return true;
+    }
+    char hdr[160];
+    if (httpd_req_get_hdr_value_str(req, "Authorization", hdr, sizeof(hdr)) != ESP_OK) {
+        return false;
+    }
+    if (strncmp(hdr, "Basic ", 6) != 0) {
+        return false;
+    }
+    uint8_t dec[128];
+    size_t olen = 0;
+    if (mbedtls_base64_decode(dec, sizeof(dec) - 1, &olen, (const uint8_t *)hdr + 6,
+                              strlen(hdr + 6)) != 0) {
+        return false;
+    }
+    dec[olen] = '\0';
+    char *colon = strchr((char *)dec, ':');
+    if (colon == NULL) {
+        return false;
+    }
+    return strcmp(colon + 1, g_cfg.web_pass) == 0;
+}
+
+static esp_err_t auth_required(httpd_req_t *req)
+{
+    httpd_resp_set_status(req, "401 Unauthorized");
+    httpd_resp_set_hdr(req, "WWW-Authenticate", "Basic realm=\"KVM-Wire\"");
+    return httpd_resp_sendstr(req, "需要登录");
+}
+
 
 /* 强制门户探测：统一 302 到配置页，触发手机/电脑的“需要登录”提示 */
 static esp_err_t h_portal(httpd_req_t *req)
@@ -146,6 +189,7 @@ static esp_err_t h_portal(httpd_req_t *req)
 
 static esp_err_t h_status(httpd_req_t *req)
 {
+    REQUIRE_AUTH(req);
     cJSON *o = cJSON_CreateObject();
     cJSON_AddStringToObject(o, "fw", "1.0.0");
     cJSON_AddNumberToObject(o, "uptime_s", esp_timer_get_time() / 1000000);
@@ -181,6 +225,7 @@ static esp_err_t h_status(httpd_req_t *req)
     cJSON_AddBoolToObject(wan, "key_set", g_cfg.relay_key[0] != '\0');
     cJSON_AddBoolToObject(wan, "e2e", kvm_crypto_enabled());
     cJSON_AddStringToObject(wan, "pair_code", g_cfg.e2e_key);
+    cJSON_AddBoolToObject(wan, "web_pass_set", g_cfg.web_pass[0] != '\0');
 
     cJSON *ble = cJSON_AddObjectToObject(o, "ble");
     cJSON_AddBoolToObject(ble, "scanning", kvm_ble_scanning());
@@ -210,6 +255,7 @@ static esp_err_t h_status(httpd_req_t *req)
 
 static esp_err_t h_wifi_scan(httpd_req_t *req)
 {
+    REQUIRE_AUTH(req);
     cJSON *o = cJSON_CreateObject();
     cJSON_AddBoolToObject(o, "scanning", kvm_wifi_scanning());
     cJSON *arr = cJSON_AddArrayToObject(o, "results");
@@ -227,6 +273,7 @@ static esp_err_t h_wifi_scan(httpd_req_t *req)
 
 static esp_err_t h_wifi_scan_start(httpd_req_t *req)
 {
+    REQUIRE_AUTH(req);
     esp_err_t err = kvm_wifi_scan_start();
     if (err != ESP_OK) {
         return reply_error(req, "409 Conflict", "扫描已在进行");
@@ -247,6 +294,7 @@ static void wifi_apply_task(void *arg)
 
 static esp_err_t h_wifi_set(httpd_req_t *req)
 {
+    REQUIRE_AUTH(req);
     cJSON *body = body_json(req);
     if (!body) {
         return reply_error(req, "400 Bad Request", "JSON 解析失败");
@@ -276,6 +324,7 @@ static esp_err_t h_wifi_set(httpd_req_t *req)
 
 static esp_err_t h_host_set(httpd_req_t *req)
 {
+    REQUIRE_AUTH(req);
     cJSON *body = body_json(req);
     if (!body) {
         return reply_error(req, "400 Bad Request", "JSON 解析失败");
@@ -324,6 +373,7 @@ static esp_err_t h_host_set(httpd_req_t *req)
 
 static esp_err_t h_ble_scan_get(httpd_req_t *req)
 {
+    REQUIRE_AUTH(req);
     cJSON *o = cJSON_CreateObject();
     cJSON_AddBoolToObject(o, "scanning", kvm_ble_scanning());
     cJSON *arr = cJSON_AddArrayToObject(o, "results");
@@ -347,6 +397,7 @@ static esp_err_t h_ble_scan_get(httpd_req_t *req)
 
 static esp_err_t h_ble_scan_start(httpd_req_t *req)
 {
+    REQUIRE_AUTH(req);
     uint32_t duration = 8000;
     cJSON *body = body_json(req);
     if (body) {
@@ -373,6 +424,7 @@ static esp_err_t h_ble_scan_start(httpd_req_t *req)
 
 static esp_err_t h_ble_connect(httpd_req_t *req)
 {
+    REQUIRE_AUTH(req);
     cJSON *body = body_json(req);
     if (!body) {
         return reply_error(req, "400 Bad Request", "JSON 解析失败");
@@ -397,6 +449,7 @@ static esp_err_t h_ble_connect(httpd_req_t *req)
 
 static esp_err_t h_ble_disconnect(httpd_req_t *req)
 {
+    REQUIRE_AUTH(req);
     cJSON *body = body_json(req);
     if (!body) {
         return reply_error(req, "400 Bad Request", "JSON 解析失败");
@@ -420,6 +473,7 @@ static esp_err_t h_ble_disconnect(httpd_req_t *req)
 
 static esp_err_t h_wan_set(httpd_req_t *req)
 {
+    REQUIRE_AUTH(req);
     cJSON *body = body_json(req);
     if (!body) {
         return reply_error(req, "400 Bad Request", "JSON 解析失败");
@@ -461,6 +515,7 @@ static esp_err_t h_wan_set(httpd_req_t *req)
 
 static esp_err_t h_pair_regen(httpd_req_t *req)
 {
+    REQUIRE_AUTH(req);
     static const char hex[] = "0123456789abcdef";
     for (int i = 0; i < 16; i++) {
         uint8_t b = (uint8_t)esp_random();
@@ -477,12 +532,45 @@ static esp_err_t h_pair_regen(httpd_req_t *req)
     return reply_json(req, o);
 }
 
+
+static esp_err_t h_webpass_set(httpd_req_t *req)
+{
+    REQUIRE_AUTH(req);
+    cJSON *body = body_json(req);
+    if (!body) {
+        return reply_error(req, "400 Bad Request", "JSON 解析失败");
+    }
+    cJSON *pass = cJSON_GetObjectItemCaseSensitive(body, "password");
+    cJSON *clear = cJSON_GetObjectItemCaseSensitive(body, "clear");
+    if (cJSON_IsBool(clear) && cJSON_IsTrue(clear)) {
+        g_cfg.web_pass[0] = '\0';
+    } else if (cJSON_IsString(pass)) {
+        const char *pw = pass->valuestring;
+        size_t n = strlen(pw);
+        if (n < 4 || n > 32) {
+            cJSON_Delete(body);
+            return reply_error(req, "400 Bad Request", "密码长度需为 4~32 位");
+        }
+        strlcpy(g_cfg.web_pass, pw, sizeof(g_cfg.web_pass));
+    }
+    esp_err_t err = kvm_config_save();
+    cJSON_Delete(body);
+    if (err != ESP_OK) {
+        return reply_error(req, "500 Internal Server Error", esp_err_to_name(err));
+    }
+    cJSON *o = cJSON_CreateObject();
+    cJSON_AddBoolToObject(o, "ok", true);
+    cJSON_AddBoolToObject(o, "enabled", g_cfg.web_pass[0] != '\0');
+    return reply_json(req, o);
+}
+
 /* ------------------------------------------------------------------ */
 /* 系统                                                                */
 /* ------------------------------------------------------------------ */
 
 static esp_err_t h_system(httpd_req_t *req)
 {
+    REQUIRE_AUTH(req);
     cJSON *body = body_json(req);
     if (!body) {
         return reply_error(req, "400 Bad Request", "JSON 解析失败");
@@ -554,6 +642,7 @@ void kvm_http_start(void)
         {.uri = "/api/host", .method = HTTP_POST, .handler = h_host_set},
         {.uri = "/api/wan", .method = HTTP_POST, .handler = h_wan_set},
         {.uri = "/api/pair/regenerate", .method = HTTP_POST, .handler = h_pair_regen},
+        {.uri = "/api/webpass", .method = HTTP_POST, .handler = h_webpass_set},
         {.uri = "/api/ble/scan", .method = HTTP_GET, .handler = h_ble_scan_get},
         {.uri = "/api/ble/scan", .method = HTTP_POST, .handler = h_ble_scan_start},
         {.uri = "/api/ble/connect", .method = HTTP_POST, .handler = h_ble_connect},
