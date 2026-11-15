@@ -1,0 +1,10 @@
+﻿{
+    "ca":  "C:\\Users\\29091\\AppData\\Local\\Programs\\KVM-Wire\\ca.crt",
+    "auto_connect":  true,
+    "relay_port":  8790,
+    "device_id":  "",
+    "pair_code":  "e983aeed3eac0b7c379259d57b8db9d3",
+    "relay_host":  "101.96.204.31",
+    "relay_key":  "35ce353967e40344a8ad2dd05b9a454778031df4f3607385"
+}
+

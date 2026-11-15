@@ -1,4 +1,4 @@
-# 打包 PC 端为单文件 exe（Windows）
+﻿# 打包 PC 端为单文件 exe（Windows）
 # 用法: powershell -ExecutionPolicy Bypass -File packaging\build_exe.ps1
 $ErrorActionPreference = "Stop"
 $root = Split-Path $PSScriptRoot -Parent
@@ -8,6 +8,10 @@ python -m PyInstaller `
     --noconfirm --clean --onefile --windowed `
     --name KVM-Wire `
     --icon "$root\assets\icon.ico" `
+    --add-data "$root\assets\icon.png;assets" `
+    --collect-data sv_ttk `
+    --collect-submodules pystray `
+    --hidden-import pystray._win32 `
     --paths "$root\host" `
     --distpath "$root\dist" `
     --workpath "$root\packaging\build" `
@@ -15,3 +19,4 @@ python -m PyInstaller `
 
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed: $LASTEXITCODE" }
 Write-Host "OK -> $root\dist\KVM-Wire.exe"
+
