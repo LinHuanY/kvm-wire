@@ -52,7 +52,7 @@ menu "KVM Bridge 配置"
 
     config KVM_DEFAULT_RELAY_HOST
         string "广域网中继地址"
-        default "101.96.204.31"
+        default ""
 
     config KVM_DEFAULT_RELAY_PORT
         int "广域网中继端口"
