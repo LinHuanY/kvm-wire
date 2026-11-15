@@ -664,12 +664,14 @@ static void auto_connect_task(void *arg)
         kvm_ble_scan_dev_t devs[KVM_BLE_MAX_SCAN];
         int n = kvm_ble_scan_get(devs, KVM_BLE_MAX_SCAN);
         for (int i = 0; i < n; i++) {
-            if (!auto_name_match(devs[i].name) || auto_already_connected(devs[i].bda) ||
+            bool saved = kvm_config_has_device(devs[i].bda);
+            if (!(saved || auto_name_match(devs[i].name)) || auto_already_connected(devs[i].bda) ||
                 auto_tried_recent(devs[i].bda, now)) {
                 continue;
             }
             char addr[18];
-            ESP_LOGI(TAG, "自动重连 %s (%s)", devs[i].name, bda_str(devs[i].bda, addr));
+            ESP_LOGI(TAG, "自动重连%s %s (%s)", saved ? "(已保存)" : "(按名字)", devs[i].name,
+                     bda_str(devs[i].bda, addr));
             auto_mark_tried(devs[i].bda, now);
             kvm_ble_connect(devs[i].bda, devs[i].addr_type);
             vTaskDelay(pdMS_TO_TICKS(7000));
