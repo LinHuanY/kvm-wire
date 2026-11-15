@@ -8,6 +8,7 @@
         "kvm_net.c"
         "kvm_wan.c"
         "kvm_captive.c"
+        "kvm_crypto.c"
         "kvm_http.c"
     INCLUDE_DIRS "."
     EMBED_FILES "index.html"
@@ -21,8 +22,10 @@
         esp_timer
         esp-tls
         json
+        mbedtls
         bt
         esp_hid
         driver
 )
+
 

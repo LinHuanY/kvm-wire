@@ -1,4 +1,4 @@
-# 安装到当前用户目录，并在开始菜单创建快捷方式
+﻿# 安装到当前用户目录，并在开始菜单创建快捷方式
 # 用法: powershell -ExecutionPolicy Bypass -File packaging\install.ps1
 $ErrorActionPreference = "Stop"
 $root = Split-Path $PSScriptRoot -Parent
@@ -9,6 +9,8 @@ $installDir = Join-Path $env:LOCALAPPDATA "Programs\KVM-Wire"
 New-Item -ItemType Directory -Force -Path $installDir | Out-Null
 Copy-Item $exe $installDir -Force
 Copy-Item (Join-Path $root "assets\icon.ico") $installDir -Force
+$caSrc = Join-Path $root "server\ca.crt"
+if (Test-Path $caSrc) { Copy-Item $caSrc $installDir -Force }
 
 $target = Join-Path $installDir "KVM-Wire.exe"
 $startMenu = [Environment]::GetFolderPath("Programs")
@@ -32,3 +34,4 @@ $sc2.Save()
 
 Write-Host "已安装: $target"
 Write-Host "开始菜单: $lnk"
+

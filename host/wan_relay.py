@@ -156,6 +156,10 @@ class _Base:
                 pass
             self.sock = None
 
+    @property
+    def connected(self) -> bool:
+        return self.sock is not None and not self._stop.is_set() and not self.last_error
+
 
 class RelayDevice(_Base):
     """模拟 ESP32 设备注册到中继。"""

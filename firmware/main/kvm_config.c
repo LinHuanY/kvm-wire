@@ -1,5 +1,7 @@
 #include "kvm_config.h"
 
+#include "esp_random.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -50,6 +52,7 @@ void kvm_config_load(void)
     strlcpy(g_cfg.relay_host, CONFIG_KVM_DEFAULT_RELAY_HOST, sizeof(g_cfg.relay_host));
     g_cfg.relay_port = CONFIG_KVM_DEFAULT_RELAY_PORT;
     strlcpy(g_cfg.relay_key, CONFIG_KVM_DEFAULT_RELAY_KEY, sizeof(g_cfg.relay_key));
+    g_cfg.e2e_key[0] = '\0';
 
     nvs_handle_t h;
     esp_err_t err = nvs_open(NVS_NS, NVS_READONLY, &h);
@@ -115,6 +118,10 @@ void kvm_config_load(void)
     if (nvs_get_str(h, "rkey", g_cfg.relay_key, &len) != ESP_OK) {
         /* 保留默认值 */
     }
+    len = sizeof(g_cfg.e2e_key);
+    if (nvs_get_str(h, "e2ekey", g_cfg.e2e_key, &len) != ESP_OK) {
+        g_cfg.e2e_key[0] = '\0';
+    }
     nvs_close(h);
 
     ESP_LOGI(TAG, "配置: sta_ssid='%s' host=%s:%u token=%016llx devs=%u",
@@ -142,6 +149,7 @@ esp_err_t kvm_config_save(void)
     nvs_set_str(h, "rhost", g_cfg.relay_host);
     nvs_set_u16(h, "rport", g_cfg.relay_port);
     nvs_set_str(h, "rkey", g_cfg.relay_key);
+    nvs_set_str(h, "e2ekey", g_cfg.e2e_key);
     err = nvs_commit(h);
     nvs_close(h);
     if (err == ESP_OK) {
@@ -262,4 +270,20 @@ esp_err_t kvm_config_remove_device(const uint8_t bda[6])
         }
     }
     return ESP_ERR_NOT_FOUND;
+}
+
+esp_err_t kvm_config_ensure_e2e_key(void)
+{
+    if (g_cfg.e2e_key[0] != '\0') {
+        return ESP_OK;
+    }
+    static const char hex[] = "0123456789abcdef";
+    for (int i = 0; i < 16; i++) {
+        uint8_t b = (uint8_t)esp_random();
+        g_cfg.e2e_key[i * 2] = hex[b >> 4];
+        g_cfg.e2e_key[i * 2 + 1] = hex[b & 0x0F];
+    }
+    g_cfg.e2e_key[32] = '\0';
+    ESP_LOGI("kvm_cfg", "已生成设备配对码");
+    return kvm_config_save();
 }

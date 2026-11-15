@@ -100,7 +100,7 @@
       <input type="checkbox" id="wan-enabled" style="flex:none">
       <span class="muted">需要 ESP32 已连上能上网的 WiFi</span>
     </div>
-    <div class="row"><label>中继地址</label><input id="wan-host" placeholder="relay.example.com" autocomplete="off"></div>
+    <div class="row"><label>中继地址</label><input id="wan-host" placeholder="101.96.204.31" autocomplete="off"></div>
     <div class="row"><label>端口</label><input id="wan-port" type="number" value="8790"></div>
     <div class="row"><label>设备密钥</label><input id="wan-key" type="password" placeholder="留空=不修改" autocomplete="off"></div>
     <div class="actions">
@@ -108,6 +108,18 @@
       <button onclick="refreshStatus()">刷新状态</button>
     </div>
     <p class="muted">启用后设备主动连中继，PC 端用 <code>python kvm_agent.py --relay 地址:端口</code> 接入。</p>
+  </section>
+
+  <section class="card">
+    <h2>设备配对码</h2>
+    <div class="row"><label>配对码</label>
+      <input id="pair-code" readonly onclick="this.select()" style="font-family:monospace">
+    </div>
+    <div class="actions">
+      <button onclick="copyPair()">复制</button>
+      <button onclick="regenPair()">重新生成</button>
+    </div>
+    <p class="muted">PC 端（KVM-Wire 或 kvm_agent）必须填写同一个配对码才能解密和控制；多台设备各有一个码。</p>
   </section>
 
   <section class="card">
@@ -198,6 +210,7 @@ async function refreshStatus() {
         text = '未启用';
       }
       if (!s.wan.key_set) text += '（未设置设备密钥）';
+      if (s.wan.pair_code) $('pair-code').value = s.wan.pair_code;
       $('wan-state').textContent = text;
       if (!wanInit) {
         wanInit = true;
@@ -284,6 +297,21 @@ function renderWifi(results) {
     tr.children[2].appendChild(btn);
     tb.appendChild(tr);
   });
+}
+
+
+async function copyPair() {
+  const el = $('pair-code'); el.select();
+  try { await navigator.clipboard.writeText(el.value); toast('配对码已复制'); }
+  catch (e) { toast('复制失败，请手动选择'); }
+}
+async function regenPair() {
+  if (!confirm('重新生成后，已连接的 PC 需要重新填写新配对码，确定吗？')) return;
+  try {
+    const r = await api('/api/pair/regenerate', 'POST', {});
+    $('pair-code').value = r.pair_code || '';
+    toast('已生成新的配对码');
+  } catch (e) { toast('生成失败: ' + e.message); }
 }
 
 async function saveWan() {

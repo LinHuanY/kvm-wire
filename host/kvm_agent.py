@@ -38,6 +38,7 @@ class AgentConfig:
     relay_ca: str | None = None
     relay_key: str | None = None
     relay_device: str | None = None
+    e2e_key: str | None = None
     mouse_mode: str = "track"         # track | relative
     mouse_scale: float = 1.0
     wheel_scale: int = 1
@@ -86,6 +87,11 @@ class KvmAgent:
         )
         self._sock: socket.socket | None = None
         self.relay = None
+        self.e2e = None
+        if cfg.e2e_key:
+            from e2ecrypto import E2ECodec
+
+            self.e2e = E2ECodec(cfg.e2e_key)
         self._peer: tuple[str, int] | None = None
         self._stop = threading.Event()
         self._rx_thread: threading.Thread | None = None
@@ -120,7 +126,7 @@ class KvmAgent:
         frame = kvmproto.encode(msg_type, self._next_seq(), frame_token, payload, dev_ms=0)
         if relay is not None:
             try:
-                relay.send(frame)
+                relay.send(self.e2e.encrypt(frame) if self.e2e is not None else frame)
             except Exception:  # noqa: BLE001 - 中继断开时静默
                 pass
             return
@@ -231,14 +237,66 @@ class KvmAgent:
         self._rx_thread.start()
 
     def _relay_rx_loop(self) -> None:
+        started = time.monotonic()
+        warned = False
         while not self._stop.is_set():
+            relay = self.relay
+            if relay is None or not relay.connected or relay.peer_gone.is_set():
+                self._relay_reconnect()
+                continue
             try:
-                data = self.relay.recv(0.2)
+                data = relay.recv(0.2)
             except Exception:  # noqa: BLE001
-                break
+                self._relay_reconnect()
+                continue
+            if self.e2e is not None and not warned and self._rx_count == 0 and time.monotonic() - started > 5:
+                print("[warn] 已连接中继但 5 秒没收到可解密的数据，设备配对码可能不一致")
+                warned = True
             if data:
+                if self.e2e is not None:
+                    plain = self.e2e.decrypt(data)
+                    if plain is None:
+                        self.engine.stats.bad += 1
+                        continue
+                    data = plain
                 self._rx_count += 1
                 self._handle_datagram(data, ("relay", self.cfg.relay_port))
+
+    def _relay_reconnect(self) -> None:
+        """中继断线后自动重连，指数退避 2s→30s。"""
+        from wan_relay import RelayClient
+
+        delay = 2.0
+        while not self._stop.is_set():
+            print(f"[relay] 连接断开，{delay:.0f}s 后重连…")
+            time.sleep(delay)
+            if self._stop.is_set():
+                return
+            try:
+                client = RelayClient(self.cfg.relay_host, self.cfg.relay_port,
+                                     self.cfg.relay_ca, self.cfg.relay_key)
+                client.connect()
+                devices = client.devices
+                if not devices:
+                    raise RuntimeError("中继上没有在线设备")
+                target = self.cfg.relay_device or devices[0]["device_id"]
+                if not client.open_device(target):
+                    raise RuntimeError(client.last_error or "配对失败")
+                old = self.relay
+                self.relay = client
+                if old is not None:
+                    try:
+                        old.close()
+                    except Exception:  # noqa: BLE001
+                        pass
+                print(f"[relay] 已重连并配对设备 {target}")
+                delay = 2.0
+                if self._decided_token is None:
+                    self._send(kvmproto.MSG_DISCOVER)
+                return
+            except Exception as exc:  # noqa: BLE001
+                print(f"[relay] 重连失败: {exc}")
+                delay = min(30.0, delay * 2)
 
     def _handle_datagram(self, data: bytes, addr: tuple[str, int]) -> None:
         try:
@@ -390,10 +448,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--port", type=int, default=None, help=f"UDP 端口，默认 {DEFAULT_PORT}")
     p.add_argument("--scan", action="store_true", help="自动发现局域网设备并选择连接")
     p.add_argument("--peer", help="直接连接设备，格式 IP[:端口]，端口默认 8766")
-    p.add_argument("--relay", help="广域网中继 host[:端口]，例如 relay.example.com:8790")
+    p.add_argument("--relay", help="广域网中继 host[:端口]，例如 101.96.204.31:8790")
     p.add_argument("--relay-ca", help="中继 CA 证书路径（默认 ../server/ca.crt）")
     p.add_argument("--relay-key", help="中继客户端密钥")
     p.add_argument("--relay-device", help="中继上的设备 ID（默认选第一个在线的）")
+    p.add_argument("--pair-code", "--e2e-key", dest="e2e_key", help="设备配对码（与设备网页显示的一致）")
     p.add_argument("--device-port", type=int, default=8766, help="设备监听端口，默认 8766")
     p.add_argument("--token", default=None, help="16 位十六进制共享 token")
     p.add_argument("--mouse-mode", choices=["track", "relative"], default=None,
@@ -450,6 +509,7 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         cfg.relay_key = args.relay_key
         cfg.relay_device = args.relay_device
+        cfg.e2e_key = args.e2e_key
 
     if args.peer:
         host, port = parse_peer(args.peer, args.device_port)

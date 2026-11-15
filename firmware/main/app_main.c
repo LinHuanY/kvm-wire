@@ -19,6 +19,7 @@
 #include "freertos/task.h"
 #include "kvm_ble.h"
 #include "kvm_config.h"
+#include "kvm_crypto.h"
 #include "kvm_http.h"
 #include "kvm_input.h"
 #include "kvm_captive.h"
@@ -139,6 +140,9 @@ void app_main(void)
 
     ESP_LOGI(TAG, "==== ESP32-S3 KVM Bridge (%s) ====", CONFIG_IDF_TARGET);
     kvm_config_load();
+    kvm_crypto_init();
+    kvm_config_ensure_e2e_key();
+    kvm_crypto_set_key(g_cfg.e2e_key);
 
     kvm_input_init();
     led_init();

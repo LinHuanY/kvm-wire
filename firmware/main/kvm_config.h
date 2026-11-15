@@ -30,6 +30,7 @@ typedef struct {
     char relay_host[64];
     uint16_t relay_port;
     char relay_key[80];
+    char e2e_key[65]; /* 端到端加密密钥，空=关闭 */
     uint8_t dev_count;
     kvm_saved_dev_t devs[KVM_MAX_SAVED_DEVS];
 } kvm_config_t;
@@ -46,6 +47,7 @@ const char *kvm_config_ap_password(void);
 esp_err_t kvm_config_set_wifi(const char *ssid, const char *pass);
 esp_err_t kvm_config_set_host(const char *ip, uint16_t port, uint64_t token, bool auto_connect);
 esp_err_t kvm_config_set_wan(bool enabled, const char *host, uint16_t port, const char *key);
+esp_err_t kvm_config_ensure_e2e_key(void);
 
 bool kvm_config_has_device(const uint8_t bda[6]);
 esp_err_t kvm_config_add_device(const uint8_t bda[6], uint8_t addr_type, uint8_t usage);

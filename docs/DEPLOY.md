@@ -127,6 +127,14 @@ python host\kvm_agent.py --relay relay.example.com:8790 --relay-key <client_key>
 PC 端需要信任中继的 CA。默认读取仓库里的 `server/ca.crt`；也可用 `--relay-ca`
 指定路径。
 
+设备网页会显示一个 32 位**设备配对码**（首次启动自动生成）。PC 端连接时填写同一个码：
+
+```powershell
+python host\kvm_agent.py --relay relay.example.com:8790 --relay-key <client_key> --pair-code <配对码>
+```
+
+配对码用于端到端 AES-256-GCM 加密：中继只转发密文，配对码错误时 PC 收不到可解密的数据。
+
 ## 8. 验证
 
 服务器上：

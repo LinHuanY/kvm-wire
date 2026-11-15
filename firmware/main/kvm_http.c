@@ -18,6 +18,8 @@
 #include "kvm_ble.h"
 #include "kvm_config.h"
 #include "kvm_input.h"
+#include "kvm_crypto.h"
+#include "esp_random.h"
 #include "kvm_net.h"
 #include "kvm_proto.h"
 #include "kvm_wan.h"
@@ -177,6 +179,8 @@ static esp_err_t h_status(httpd_req_t *req)
     cJSON_AddNumberToObject(wan, "port", g_cfg.relay_port);
     cJSON_AddStringToObject(wan, "status", kvm_wan_status_text());
     cJSON_AddBoolToObject(wan, "key_set", g_cfg.relay_key[0] != '\0');
+    cJSON_AddBoolToObject(wan, "e2e", kvm_crypto_enabled());
+    cJSON_AddStringToObject(wan, "pair_code", g_cfg.e2e_key);
 
     cJSON *ble = cJSON_AddObjectToObject(o, "ble");
     cJSON_AddBoolToObject(ble, "scanning", kvm_ble_scanning());
@@ -434,14 +438,42 @@ static esp_err_t h_wan_set(httpd_req_t *req)
         cJSON_Delete(body);
         return reply_error(req, "400 Bad Request", "中继地址/端口不正确");
     }
+    cJSON *e2e = cJSON_GetObjectItemCaseSensitive(body, "e2e_key");
+    cJSON *e2e_clear = cJSON_GetObjectItemCaseSensitive(body, "e2e_clear");
+    if (cJSON_IsString(e2e) && e2e->valuestring[0] != '\0') {
+        strlcpy(g_cfg.e2e_key, e2e->valuestring, sizeof(g_cfg.e2e_key));
+    }
+    if (cJSON_IsBool(e2e_clear) && cJSON_IsTrue(e2e_clear)) {
+        g_cfg.e2e_key[0] = '\0';
+    }
     esp_err_t err = kvm_config_set_wan(en, host_str, (uint16_t)port_val, key_str);
     cJSON_Delete(body);
     if (err != ESP_OK) {
         return reply_error(req, "500 Internal Server Error", esp_err_to_name(err));
     }
+    kvm_crypto_set_key(g_cfg.e2e_key);
     kvm_wan_reload();
     cJSON *o = cJSON_CreateObject();
     cJSON_AddBoolToObject(o, "ok", true);
+    return reply_json(req, o);
+}
+
+
+static esp_err_t h_pair_regen(httpd_req_t *req)
+{
+    static const char hex[] = "0123456789abcdef";
+    for (int i = 0; i < 16; i++) {
+        uint8_t b = (uint8_t)esp_random();
+        g_cfg.e2e_key[i * 2] = hex[b >> 4];
+        g_cfg.e2e_key[i * 2 + 1] = hex[b & 0x0F];
+    }
+    g_cfg.e2e_key[32] = '\0';
+    kvm_config_save();
+    kvm_crypto_set_key(g_cfg.e2e_key);
+    kvm_wan_reload();
+    cJSON *o = cJSON_CreateObject();
+    cJSON_AddBoolToObject(o, "ok", true);
+    cJSON_AddStringToObject(o, "pair_code", g_cfg.e2e_key);
     return reply_json(req, o);
 }
 
@@ -521,6 +553,7 @@ void kvm_http_start(void)
         {.uri = "/api/wifi", .method = HTTP_POST, .handler = h_wifi_set},
         {.uri = "/api/host", .method = HTTP_POST, .handler = h_host_set},
         {.uri = "/api/wan", .method = HTTP_POST, .handler = h_wan_set},
+        {.uri = "/api/pair/regenerate", .method = HTTP_POST, .handler = h_pair_regen},
         {.uri = "/api/ble/scan", .method = HTTP_GET, .handler = h_ble_scan_get},
         {.uri = "/api/ble/scan", .method = HTTP_POST, .handler = h_ble_scan_start},
         {.uri = "/api/ble/connect", .method = HTTP_POST, .handler = h_ble_connect},

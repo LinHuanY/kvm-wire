@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """ESP32-S3 KVM 图形控制台。
 
 启动后自动扫描局域网内的设备，选中后点“连接”，确认后才开始注入。
@@ -7,14 +7,30 @@
 
 from __future__ import annotations
 
+import sys
 import threading
 import time
 import tkinter as tk
-from tkinter import messagebox, ttk
+from pathlib import Path
+from tkinter import filedialog, messagebox, ttk
 
 import kvmproto
 from discovery import DiscoveredDevice, LanDiscovery
 from kvm_agent import AgentConfig, KvmAgent
+
+
+def default_ca_path() -> str:
+    """打包后优先用 exe 同目录的 ca.crt，源码运行时用仓库 server/ca.crt。"""
+    if getattr(sys, "frozen", False):
+        base = Path(sys.executable).resolve().parent
+        candidates = [base / "ca.crt", base / "server" / "ca.crt"]
+    else:
+        base = Path(__file__).resolve().parent.parent
+        candidates = [base / "server" / "ca.crt", base / "ca.crt"]
+    for path in candidates:
+        if path.exists():
+            return str(path)
+    return str(candidates[0])
 
 
 class KvmApp:
@@ -111,6 +127,45 @@ class KvmApp:
         self.var_repeat = tk.BooleanVar(value=True)
         ttk.Checkbutton(row2, text="长按重复", variable=self.var_repeat).pack(side="left", padx=(16, 0))
 
+        # ---- 广域网中继 ----
+        relay = ttk.LabelFrame(outer, text="广域网中继（远程时使用，可选）", padding=8)
+        relay.pack(fill="x", pady=(10, 8))
+
+        r1 = ttk.Frame(relay)
+        r1.pack(fill="x", pady=2)
+        ttk.Label(r1, text="中继地址", width=8).pack(side="left")
+        self.var_relay_host = tk.StringVar()
+        ttk.Entry(r1, textvariable=self.var_relay_host, width=24).pack(side="left")
+        ttk.Label(r1, text="端口", width=5).pack(side="left", padx=(10, 0))
+        self.var_relay_port = tk.StringVar(value="8790")
+        ttk.Entry(r1, textvariable=self.var_relay_port, width=7).pack(side="left")
+        ttk.Label(r1, text="设备 ID（可空）", width=13).pack(side="left", padx=(10, 0))
+        self.var_relay_device = tk.StringVar()
+        ttk.Entry(r1, textvariable=self.var_relay_device, width=16).pack(side="left")
+
+        r2 = ttk.Frame(relay)
+        r2.pack(fill="x", pady=2)
+        ttk.Label(r2, text="客户端密钥", width=8).pack(side="left")
+        self.var_relay_key = tk.StringVar()
+        ttk.Entry(r2, textvariable=self.var_relay_key, width=30, show="*").pack(side="left")
+        ttk.Label(r2, text="CA 证书", width=8).pack(side="left", padx=(10, 0))
+        self.var_relay_ca = tk.StringVar(value=default_ca_path())
+        ttk.Entry(r2, textvariable=self.var_relay_ca, width=28).pack(side="left")
+        ttk.Button(r2, text="浏览", command=self.browse_ca).pack(side="left", padx=4)
+
+        r3 = ttk.Frame(relay)
+        r3.pack(fill="x", pady=2)
+        ttk.Label(r3, text="设备配对码", width=8).pack(side="left")
+        self.var_e2e = tk.StringVar()
+        ttk.Entry(r3, textvariable=self.var_e2e, width=30, show="*").pack(side="left")
+        ttk.Label(r3, text="填设备网页显示的配对码", foreground="#666").pack(side="left", padx=10)
+
+        r4 = ttk.Frame(relay)
+        r4.pack(fill="x", pady=(4, 0))
+        self.btn_relay = ttk.Button(r4, text="连接中继", command=self.connect_relay)
+        self.btn_relay.pack(side="left")
+        ttk.Label(r4, text="留空设备 ID 时自动选择第一台在线设备", foreground="#666").pack(side="left", padx=10)
+
         # ---- 状态 ----
         status = ttk.LabelFrame(outer, text="状态", padding=8)
         status.pack(fill="x")
@@ -194,6 +249,12 @@ class KvmApp:
         self.btn_connect.config(state="normal" if (has_selection and not connected) else "disabled")
         self.btn_disconnect.config(state="normal" if connected else "disabled")
         self.btn_scan.config(state="disabled" if (connected or self.scanning) else "normal")
+        self.btn_relay.config(state="disabled" if connected else "normal")
+
+    def browse_ca(self) -> None:
+        path = filedialog.askopenfilename(title="选择中继 CA 证书", filetypes=[("证书", "*.crt *.pem"), ("全部", "*.*")])
+        if path:
+            self.var_relay_ca.set(path)
 
     # ------------------------------------------------------------------
     # 连接 / 断开
@@ -236,12 +297,83 @@ class KvmApp:
             wheel_scale=wheel,
             repeat=self.var_repeat.get(),
         )
+        self._start_agent(cfg)
+        self.hint.set(f"已连接 {device.addr}，键鼠操作已注入本机。")
+
+    def connect_relay(self) -> None:
+        if self.agent is not None:
+            return
+        host = self.var_relay_host.get().strip()
+        if not host:
+            messagebox.showinfo("提示", "请填写中继地址")
+            return
+        try:
+            port = int(self.var_relay_port.get())
+            scale = float(self.var_scale.get())
+            wheel = int(self.var_wheel.get())
+        except ValueError:
+            messagebox.showerror("参数错误", "端口/灵敏度/滚轮倍率必须是数字")
+            return
+        key = self.var_relay_key.get().strip()
+        if not key:
+            messagebox.showinfo("提示", "请填写中继客户端密钥")
+            return
+        ca = self.var_relay_ca.get().strip()
+        if not ca or not Path(ca).exists():
+            messagebox.showerror("CA 证书错误", "找不到 CA 证书，请选择中继服务器生成的 ca.crt")
+            return
+        device_id = self.var_relay_device.get().strip() or None
+        if not messagebox.askyesno(
+            "确认连接中继",
+            f"中继：{host}:{port}\n设备：{device_id or '自动选择第一台'}\n\n"
+            "连接后，蓝牙键鼠的操作会注入到本机（当前前台窗口）。\n确定开始吗？",
+        ):
+            return
+
+        cfg = AgentConfig(
+            relay_host=host,
+            relay_port=port,
+            relay_ca=ca,
+            relay_key=key,
+            relay_device=device_id,
+            e2e_key=self.var_e2e.get().strip() or None,
+            mouse_mode=self.var_mode.get(),
+            mouse_scale=scale,
+            wheel_scale=wheel,
+            repeat=self.var_repeat.get(),
+        )
+        self._start_agent(cfg)
+        self.hint.set(f"正在通过中继 {host}:{port} 连接设备…")
+
+    def _start_agent(self, cfg: AgentConfig) -> None:
         self.agent = KvmAgent(cfg)
-        self.agent_thread = threading.Thread(target=self.agent.run, name="kvm-agent", daemon=True)
+        self.agent_thread = threading.Thread(target=self._run_agent, name="kvm-agent", daemon=True)
         self.agent_thread.start()
         self.status_vars["state"].set("已连接（注入中）")
-        self.hint.set(f"已连接 {device.addr}，键鼠操作已注入本机。")
         self._refresh_buttons()
+
+    def _run_agent(self) -> None:
+        try:
+            self.agent.run()
+        except SystemExit as exc:
+            msg = str(exc)
+            self.root.after(0, lambda: self._agent_failed(msg))
+        except Exception as exc:  # noqa: BLE001
+            msg = f"{type(exc).__name__}: {exc}"
+            self.root.after(0, lambda: self._agent_failed(msg))
+
+    def _agent_failed(self, msg: str) -> None:
+        if self.agent is not None:
+            try:
+                self.agent.stop()
+            except Exception:  # noqa: BLE001
+                pass
+        self.agent = None
+        self.agent_thread = None
+        self.status_vars["state"].set("连接失败")
+        self.hint.set(msg)
+        self._refresh_buttons()
+        messagebox.showerror("连接失败", msg)
 
     def disconnect(self) -> None:
         if self.agent is None:

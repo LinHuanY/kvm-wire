@@ -17,6 +17,7 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "kvm_config.h"
+#include "kvm_crypto.h"
 #include "kvm_net.h"
 #include "kvm_proto.h"
 #include "kvm_wifi.h"
@@ -188,7 +189,15 @@ static void drain_tx(void)
     wan_tx_item_t item;
     int budget = 24;
     while (budget-- > 0 && s_tx_q != NULL && xQueueReceive(s_tx_q, &item, 0) == pdTRUE) {
-        relay_send(T_DATA, item.data, item.len);
+        if (kvm_crypto_enabled()) {
+            uint8_t enc[400];
+            int n = kvm_crypto_encrypt(item.data, item.len, enc, sizeof(enc));
+            if (n > 0) {
+                relay_send(T_DATA, enc, (size_t)n);
+            }
+        } else {
+            relay_send(T_DATA, item.data, item.len);
+        }
     }
 }
 
@@ -367,7 +376,15 @@ static void wan_task(void *arg)
                 break;
             case T_DATA:
                 if (s_frame_cb && total > 1) {
-                    s_frame_cb(buf + 1, total - 1);
+                    if (kvm_crypto_enabled()) {
+                        uint8_t plain[320];
+                        int n = kvm_crypto_decrypt(buf + 1, total - 1, plain, sizeof(plain));
+                        if (n > 0) {
+                            s_frame_cb(plain, (size_t)n);
+                        }
+                    } else {
+                        s_frame_cb(buf + 1, total - 1);
+                    }
                 }
                 break;
             case T_PING:

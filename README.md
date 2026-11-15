@@ -19,7 +19,7 @@
 - **Windows 注入**：`SendInput` + 绝对坐标跟踪，支持多显示器、滚轮、横向滚动、按键重复
 - **自动重连**：键鼠休眠断开后按名字扫描重连，不用每次开网页
 - **低延迟**：TCP_NODELAY、5ms 读超时、BLE 7.5ms 连接间隔、鼠标 8ms 合并
-- **安全**：链路 TLS；设备 token + 中继 device/client 密钥；中继只转发不解析 KVM 帧
+- **安全**：链路 TLS；设备 token + 中继 device/client 密钥；**设备生成配对码，PC 输入后才解密**（AES-256-GCM 端到端加密，中继看不到键鼠内容）
 
 ## 架构
 
@@ -138,7 +138,9 @@ python host\kvm_agent.py --relay relay.example.com:8790 --relay-key <CLIENT_KEY>
 ## 安全模型
 
 - 局域网：UDP 明文 + 16 位十六进制共享 token（**不要暴露 8766 到公网**）
-- 广域网：TLS（自签 CA）+ 设备密钥/客户端密钥；中继只按 device_id 转发
+- 广域网：TLS（自签 CA）+ 中继 device/client 密钥
+- **端到端加密**：每台设备首次启动生成 32 位配对码（网页可见/可重置），PC 端必须输入同一配对码；
+  键鼠帧用 AES-256-GCM 加密后经中继转发，中继只看到密文，配对码错误无法解密、无法注入
 - 建议：token/密钥随机生成；中继使用独立系统用户与目录；定期轮换密钥；
   不要把 `config.json`、CA 私钥、设备密钥提交到仓库
 
