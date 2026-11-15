@@ -1,0 +1,21 @@
+[Unit]
+Description=KVM-Wire WAN Relay
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ipkvm
+Group=ipkvm
+WorkingDirectory=/opt/ipkvm-relay
+ExecStart=/usr/bin/python3 /opt/ipkvm-relay/relay_server.py /opt/ipkvm-relay/config.json
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+ReadWritePaths=/opt/ipkvm-relay
+
+[Install]
+WantedBy=multi-user.target

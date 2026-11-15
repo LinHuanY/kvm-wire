@@ -1,0 +1,90 @@
+﻿menu "KVM Bridge 配置"
+
+    config KVM_AP_SSID_PREFIX
+        string "AP 热点名称前缀"
+        default "KVM-Setup"
+        help
+            实际 SSID 为 <前缀>-XXXX，XXXX 是 MAC 后两字节。
+            连接该热点后打开 http://192.168.4.1/ 进行配置。
+
+    config KVM_AP_PASSWORD
+        string "AP 热点密码（建议留空 = 开放网络）"
+        default ""
+        help
+            留空时热点不加密码，手机/电脑最容易连上（默认）。
+            填 8 位以上则使用 WPA2-PSK。
+
+    config KVM_DEFAULT_STA_SSID
+        string "默认 WiFi SSID（可留空）"
+        default ""
+        help
+            烧录后自动连接的局域网 WiFi。留空时只能通过 AP 网页配置。
+
+    config KVM_DEFAULT_STA_PASS
+        string "默认 WiFi 密码"
+        default ""
+
+    config KVM_DEFAULT_HOST_IP
+        string "PC 注入端 IP（留空=广播自动发现）"
+        default ""
+        help
+            运行 python kvm_agent.py 的那台电脑的局域网 IP。
+            留空时设备会向 255.255.255.255 广播，收到 PC 回包后自动锁定。
+
+    config KVM_DEFAULT_HOST_PORT
+        int "PC 注入端 UDP 端口"
+        default 8765
+        range 1 65535
+
+    config KVM_DEVICE_PORT
+        int "设备监听 UDP 端口（PC 自动发现用）"
+        default 8766
+        range 1 65535
+        help
+            设备绑定这个端口，PC 端向局域网广播 DISCOVER 后即可自动发现它。
+            PC 注入端默认监听 8765，两者不要相同。
+
+    config KVM_DEFAULT_TOKEN
+        string "共享 token（16 位十六进制）"
+        default "0123456789abcdef"
+        help
+            必须与 PC 端 --token 一致。建议改成自己的随机值。
+
+    config KVM_DEFAULT_RELAY_HOST
+        string "广域网中继地址"
+        default ""
+
+    config KVM_DEFAULT_RELAY_PORT
+        int "广域网中继端口"
+        default 8790
+        range 1 65535
+
+    config KVM_DEFAULT_RELAY_KEY
+        string "广域网设备密钥（留空则在网页里填）"
+        default ""
+
+    config KVM_BLE_BOND
+        bool "BLE 配对时启用加密/绑定"
+        default y
+        help
+            大多数蓝牙键鼠需要绑定才能收到 HID 通知。若某设备配对失败，
+            可以关闭此项再试。
+
+    config KVM_STATUS_LED_GPIO
+        int "状态 LED GPIO（-1 表示不用）"
+        default 2
+        help
+            S3-Cam 板载蓝色 LED 接在 GPIO2，低电平点亮。
+
+    config KVM_LED_ACTIVE_LOW
+        bool "LED 低电平点亮"
+        default y
+
+    config KVM_BUTTON_GPIO
+        int "恢复出厂按键 GPIO（-1 表示不用）"
+        default 0
+        help
+            BOOT 键默认接 GPIO0，长按 5 秒恢复出厂设置。
+
+endmenu
+

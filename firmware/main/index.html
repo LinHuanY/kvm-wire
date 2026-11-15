@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ESP32-S3 KVM 配置</title>
+<style>
+  :root{
+    --bg:#0f1419; --panel:#171e26; --panel2:#1e2732; --line:#2b3745;
+    --text:#e6edf3; --muted:#8b98a5; --accent:#42a5f5; --ok:#2ecc71; --warn:#f0ad4e; --bad:#e74c3c;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif}
+  header{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:16px 20px;border-bottom:1px solid var(--line);background:var(--panel)}
+  header h1{font-size:18px;margin:0;font-weight:600}
+  .badge{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;background:var(--panel2);border:1px solid var(--line);font-size:12px;color:var(--muted)}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--muted)}
+  .dot.ok{background:var(--ok)} .dot.bad{background:var(--bad)} .dot.warn{background:var(--warn)}
+  main{max-width:1080px;margin:0 auto;padding:18px;display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(320px,1fr))}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px}
+  .card h2{margin:0 0 12px;font-size:15px;font-weight:600;color:var(--accent)}
+  .row{display:flex;gap:8px;align-items:center;margin:8px 0;flex-wrap:wrap}
+  .row label{min-width:84px;color:var(--muted)}
+  input,select,button{font:inherit;border-radius:8px;border:1px solid var(--line);background:var(--panel2);color:var(--text);padding:8px 10px;outline:none}
+  input{flex:1;min-width:120px}
+  input:focus{border-color:var(--accent)}
+  button{cursor:pointer;border-color:#2f4a63;background:#1b2b3a}
+  button:hover{background:#22374a}
+  button.primary{background:var(--accent);color:#0b1218;border-color:var(--accent);font-weight:600}
+  button.primary:hover{filter:brightness(1.08)}
+  button.danger{border-color:#5a2a2a;background:#2a1717;color:#ff9b9b}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  td,th{padding:7px 6px;border-bottom:1px solid var(--line);text-align:left}
+  th{color:var(--muted);font-weight:500}
+  .muted{color:var(--muted);font-size:12px}
+  .kv{display:grid;grid-template-columns:96px 1fr;gap:6px 10px;font-size:13px}
+  .kv b{color:var(--muted);font-weight:500}
+  .actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+  #toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#233040;border:1px solid var(--line);
+         padding:10px 16px;border-radius:10px;opacity:0;transition:.25s;pointer-events:none;max-width:90vw}
+  #toast.show{opacity:1}
+  .list{max-height:280px;overflow:auto}
+  .tag{font-size:11px;padding:1px 6px;border-radius:6px;background:#22303f;color:#9fb6c9;margin-left:6px}
+</style>
+</head>
+<body>
+<header>
+  <h1>ESP32-S3 键鼠桥</h1>
+  <span class="badge"><span id="dot-wifi" class="dot"></span><span id="txt-wifi">WiFi 未连接</span></span>
+  <span class="badge"><span id="dot-host" class="dot"></span><span id="txt-host">PC 未连接</span></span>
+  <span class="badge"><span id="dot-ble" class="dot"></span><span id="txt-ble">蓝牙未连接</span></span>
+  <span class="badge">AP: <b id="ap-ssid">-</b></span>
+</header>
+
+<main>
+  <section class="card">
+    <h2>运行状态</h2>
+    <div class="kv">
+      <b>固件</b><span id="st-fw">-</span>
+      <b>运行时长</b><span id="st-uptime">-</span>
+      <b>STA 网络</b><span id="st-sta">-</span>
+      <b>本机地址</b><span id="st-ip">-</span>
+      <b>PC 目标</b><span id="st-host">-</span>
+      <b>发送/接收</b><span id="st-counters">-</span>
+    </div>
+    <div class="actions">
+      <button onclick="releaseAll()">释放全部按键</button>
+      <button onclick="refreshStatus()">刷新</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>连接 WiFi（ESP32 上网用）</h2>
+    <div class="row"><label>SSID</label><input id="wifi-ssid" placeholder="家庭/公司 WiFi 名称" autocomplete="off"></div>
+    <div class="row"><label>密码</label><input id="wifi-pass" type="password" placeholder="WiFi 密码" autocomplete="off"></div>
+    <div class="actions">
+      <button onclick="scanWifi()">扫描 WiFi</button>
+      <button class="primary" onclick="saveWifi()">保存并连接</button>
+    </div>
+    <div class="list"><table><thead><tr><th>SSID</th><th>信号</th><th></th></tr></thead><tbody id="wifi-list"></tbody></table></div>
+    <p class="muted">ESP32 需要和电脑在同一个局域网。AP 热点 <b id="ap-ssid2">-</b> 一直可用，用于随时改配置。</p>
+  </section>
+
+  <section class="card">
+    <h2>PC 注入端</h2>
+    <div class="row"><label>IP 地址</label><input id="host-ip" placeholder="留空=自动发现" autocomplete="off"></div>
+    <div class="row"><label>UDP 端口</label><input id="host-port" type="number" value="8765"></div>
+    <div class="row"><label>Token</label><input id="host-token" placeholder="16 位十六进制" autocomplete="off"></div>
+    <div class="actions">
+      <button class="primary" onclick="saveHost()">保存</button>
+      <button onclick="refreshStatus()">检测连接</button>
+    </div>
+    <p class="muted">先在电脑上运行 <code>python kvm_agent.py</code>，它会显示需要填入的 token 和 IP。</p>
+  </section>
+
+  <section class="card">
+    <h2>广域网中继</h2>
+    <div class="row"><label>状态</label><span id="wan-state" class="muted">-</span></div>
+    <div class="row"><label>启用</label>
+      <input type="checkbox" id="wan-enabled" style="flex:none">
+      <span class="muted">需要 ESP32 已连上能上网的 WiFi</span>
+    </div>
+    <div class="row"><label>中继地址</label><input id="wan-host" placeholder="relay.example.com" autocomplete="off"></div>
+    <div class="row"><label>端口</label><input id="wan-port" type="number" value="8790"></div>
+    <div class="row"><label>设备密钥</label><input id="wan-key" type="password" placeholder="留空=不修改" autocomplete="off"></div>
+    <div class="actions">
+      <button class="primary" onclick="saveWan()">保存中继配置</button>
+      <button onclick="refreshStatus()">刷新状态</button>
+    </div>
+    <p class="muted">启用后设备主动连中继，PC 端用 <code>python kvm_agent.py --relay 地址:端口</code> 接入。</p>
+  </section>
+
+  <section class="card">
+    <h2>蓝牙键鼠</h2>
+    <div class="actions">
+      <button class="primary" onclick="scanBle()">扫描蓝牙设备</button>
+      <span class="muted" id="ble-scan-state"></span>
+    </div>
+    <div class="list"><table><thead><tr><th>设备</th><th>地址</th><th>信号</th><th></th></tr></thead><tbody id="ble-list"></tbody></table></div>
+    <h2 style="margin-top:16px">已连接</h2>
+    <table><thead><tr><th>设备</th><th>类型</th><th>电量</th><th></th></tr></thead><tbody id="ble-conn"></tbody></table>
+    <p class="muted">键盘/鼠标先进入配对模式（通常是长按蓝牙键）。扫描到后点“连接”，首次会自动配对。</p>
+  </section>
+
+  <section class="card">
+    <h2>系统</h2>
+    <div class="actions">
+      <button onclick="sys('reboot')">重启</button>
+      <button onclick="sys('forget_wifi')">忘记 WiFi</button>
+      <button class="danger" onclick="sys('factory')">恢复出厂设置</button>
+    </div>
+    <p class="muted">「忘记 WiFi」只清除 STA 配置（回到纯热点模式）；恢复出厂会清空 WiFi / token / 已配对设备。</p>
+  </section>
+</main>
+
+<div id="toast"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+let wifiTimer = null, bleTimer = null;
+let hostInit = false, wifiInit = false, wanInit = false;
+
+function toast(msg, ms = 2200) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(t._h);
+  t._h = setTimeout(() => t.classList.remove('show'), ms);
+}
+
+async function api(path, method = 'GET', body = null) {
+  const opt = { method, headers: {} };
+  if (body) { opt.headers['Content-Type'] = 'application/json'; opt.body = JSON.stringify(body); }
+  const res = await fetch(path, opt);
+  const text = await res.text();
+  let data = {};
+  try { data = text ? JSON.parse(text) : {}; } catch (e) { data = { error: text }; }
+  if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+  return data;
+}
+
+function fmtUptime(s) {
+  s = s | 0;
+  const h = (s / 3600) | 0, m = ((s % 3600) / 60) | 0, sec = s % 60;
+  return (h ? h + 'h ' : '') + m + 'm ' + sec + 's';
+}
+
+function setBadge(dot, txt, ok, text) {
+  $(dot).className = 'dot ' + (ok ? 'ok' : 'bad');
+  $(txt).textContent = text;
+}
+
+async function refreshStatus() {
+  try {
+    const s = await api('/api/status');
+    $('st-fw').textContent = s.fw;
+    $('st-uptime').textContent = fmtUptime(s.uptime_s);
+    $('ap-ssid').textContent = s.ap.ssid;
+    $('ap-ssid2').textContent = s.ap.ssid;
+    $('st-sta').textContent = s.wifi.up ? (s.wifi.ssid + ' (' + s.wifi.rssi + ' dBm)') : (s.wifi.configured ? '已配置，正在连接…' : '未配置');
+    $('st-ip').textContent = s.wifi.up ? s.wifi.ip : 'AP: 192.168.4.1';
+    setBadge('dot-wifi', 'txt-wifi', s.wifi.up, s.wifi.up ? ('WiFi ' + s.wifi.ssid) : 'WiFi 未连接');
+
+    $('st-host').textContent = (s.host.ip || '自动发现') + ':' + s.host.port + (s.host.online ? ' · 在线' : ' · 离线');
+    $('st-counters').textContent = s.host.tx + ' 包发出 / ' + s.host.rx + ' 包收到';
+    setBadge('dot-host', 'txt-host', s.host.online, s.host.online ? 'PC 在线' : 'PC 未连接');
+
+    const n = s.ble.connected.length;
+    setBadge('dot-ble', 'txt-ble', n > 0, n > 0 ? (n + ' 个蓝牙设备') : '蓝牙未连接');
+
+    if (s.wan) {
+      let text;
+      if (s.wan.connected) {
+        text = '已连接中继 ' + s.wan.host + ':' + s.wan.port;
+      } else if (s.wan.enabled) {
+        text = '中继状态：' + s.wan.status;
+      } else {
+        text = '未启用';
+      }
+      if (!s.wan.key_set) text += '（未设置设备密钥）';
+      $('wan-state').textContent = text;
+      if (!wanInit) {
+        wanInit = true;
+        $('wan-host').value = s.wan.host || '';
+        $('wan-port').value = s.wan.port || 8790;
+        $('wan-enabled').checked = !!s.wan.enabled;
+      }
+    }
+
+    const conn = $('ble-conn');
+    conn.innerHTML = '';
+    if (!n) {
+      conn.innerHTML = '<tr><td colspan="4" class="muted">暂无</td></tr>';
+    }
+    for (const d of s.ble.connected) {
+      const tr = document.createElement('tr');
+      const type = { 1: '键盘', 2: '鼠标', 3: '消费类' }[d.usage] || '其他';
+      tr.innerHTML = '<td></td><td>' + type + '</td><td>' + (d.battery < 0 ? '?' : d.battery + '%') + '</td><td></td>';
+      tr.children[0].textContent = d.name || d.addr;
+      const btn = document.createElement('button');
+      btn.textContent = '断开';
+      btn.onclick = () => disconnectBle(d.addr);
+      tr.children[3].appendChild(btn);
+      conn.appendChild(tr);
+    }
+    $('ble-scan-state').textContent = s.ble.scanning ? '扫描中…' : '';
+    if (s.ble.scanning) startBlePoll();
+
+    // 首次加载时用设备配置填充输入框，之后不打断用户编辑
+    if (!hostInit) {
+      hostInit = true;
+      $('host-ip').value = s.host.ip || '';
+      $('host-port').value = s.host.port;
+      $('host-token').value = s.host.token;
+    }
+    if (!wifiInit && s.wifi.configured) {
+      wifiInit = true;
+      $('wifi-ssid').value = s.wifi.ssid;
+    }
+  } catch (e) {
+    toast('状态读取失败: ' + e.message);
+  }
+}
+
+async function saveWifi() {
+  const ssid = $('wifi-ssid').value.trim();
+  if (!ssid) return toast('请填写 SSID');
+  try {
+    await api('/api/wifi', 'POST', { ssid, password: $('wifi-pass').value });
+    toast('已保存，正在切换网络；页面可能短暂断开，稍后刷新');
+    setTimeout(refreshStatus, 2500);
+  } catch (e) {
+    toast('请求中断（切信道会断开当前页面），几秒后刷新看 STA 状态');
+    setTimeout(refreshStatus, 3000);
+  }
+}
+
+async function scanWifi() {
+  try {
+    await api('/api/wifi/scan', 'POST');
+    toast('正在扫描 WiFi…');
+    clearInterval(wifiTimer);
+    wifiTimer = setInterval(async () => {
+      const r = await api('/api/wifi/scan');
+      if (!r.scanning) {
+        clearInterval(wifiTimer);
+        renderWifi(r.results);
+        toast('扫描完成，共 ' + r.results.length + ' 个');
+      }
+    }, 1200);
+  } catch (e) { toast('扫描失败: ' + e.message); }
+}
+
+function renderWifi(results) {
+  const tb = $('wifi-list');
+  tb.innerHTML = '';
+  results.forEach(a => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = '<td></td><td>' + a.rssi + ' dBm</td><td></td>';
+    tr.children[0].textContent = a.ssid || '(隐藏网络)';
+    const btn = document.createElement('button');
+    btn.textContent = '选择';
+    btn.onclick = () => { $('wifi-ssid').value = a.ssid; $('wifi-pass').focus(); };
+    tr.children[2].appendChild(btn);
+    tb.appendChild(tr);
+  });
+}
+
+async function saveWan() {
+  try {
+    await api('/api/wan', 'POST', {
+      enabled: $('wan-enabled').checked,
+      host: $('wan-host').value.trim(),
+      port: parseInt($('wan-port').value, 10) || 8790,
+      key: $('wan-key').value,
+    });
+    toast('中继配置已保存，正在重连…');
+    setTimeout(refreshStatus, 2500);
+  } catch (e) { toast('保存失败: ' + e.message); }
+}
+
+async function saveHost() {
+  const ip = $('host-ip').value.trim();
+  const port = parseInt($('host-port').value, 10) || 8765;
+  const token = $('host-token').value.trim();
+  try {
+    await api('/api/host', 'POST', { ip, port, token });
+    toast('已保存');
+  } catch (e) { toast('保存失败: ' + e.message); }
+}
+
+async function scanBle() {
+  try {
+    await api('/api/ble/scan', 'POST', { duration_ms: 8000 });
+    toast('正在扫描蓝牙设备…');
+    $('ble-scan-state').textContent = '扫描中…';
+    startBlePoll();
+  } catch (e) { toast('扫描失败: ' + e.message); }
+}
+
+function startBlePoll() {
+  clearInterval(bleTimer);
+  bleTimer = setInterval(async () => {
+    const r = await api('/api/ble/scan');
+    if (!r.scanning) {
+      clearInterval(bleTimer);
+      $('ble-scan-state').textContent = '扫描完成';
+      renderBle(r.results);
+    }
+  }, 1500);
+}
+
+function renderBle(results) {
+  const tb = $('ble-list');
+  tb.innerHTML = '';
+  if (!results.length) {
+    tb.innerHTML = '<tr><td colspan="4" class="muted">没有发现设备，确认键鼠已进入配对模式</td></tr>';
+    return;
+  }
+  results.sort((a, b) => (b.hid - a.hid) || (b.rssi - a.rssi));
+  results.forEach(d => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = '<td></td><td>' + d.addr + '</td><td>' + d.rssi + ' dBm</td><td></td>';
+    const nameCell = tr.children[0];
+    nameCell.textContent = d.name || '(未命名)';
+    if (d.hid) {
+      const tag = document.createElement('span');
+      tag.className = 'tag';
+      tag.textContent = { 1: '键盘', 2: '鼠标', 3: '键鼠' }[d.usage] || 'HID';
+      nameCell.appendChild(tag);
+    }
+    const btn = document.createElement('button');
+    btn.textContent = '连接';
+    btn.onclick = () => connectBle(d.addr, d.type);
+    tr.children[3].appendChild(btn);
+    tb.appendChild(tr);
+  });
+}
+
+async function connectBle(addr, type) {
+  try {
+    await api('/api/ble/connect', 'POST', { addr, type });
+    toast('正在连接 ' + addr + ' …');
+    setTimeout(refreshStatus, 2500);
+  } catch (e) { toast('连接失败: ' + e.message); }
+}
+
+async function disconnectBle(addr) {
+  try {
+    await api('/api/ble/disconnect', 'POST', { addr });
+    toast('已断开');
+    setTimeout(refreshStatus, 800);
+  } catch (e) { toast('断开失败: ' + e.message); }
+}
+
+async function releaseAll() {
+  try { await api('/api/system', 'POST', { action: 'release' }); toast('已释放全部按键'); }
+  catch (e) { toast('失败: ' + e.message); }
+}
+
+async function sys(action) {
+  if (action === 'factory' && !confirm('确定恢复出厂设置？此操作会清空所有配置并重启。')) return;
+  try {
+    await api('/api/system', 'POST', { action });
+    toast(action === 'reboot' ? '正在重启…' : '已恢复出厂，正在重启…');
+  } catch (e) { toast('操作失败: ' + e.message); }
+}
+
+refreshStatus();
+setInterval(refreshStatus, 2000);
+</script>
+</body>
+</html>

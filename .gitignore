@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# 固件构建产物
+firmware/build/
+firmware/managed_components/
+firmware/dependencies.lock
+firmware/sdkconfig
+firmware/sdkconfig.old
+firmware/main/relay_ca.pem
+*.bin
+*.elf
+*.map
+
+# 打包产物
+dist/
+build/
+packaging/build/
+*.spec.bak
+
+# 本地配置与密钥
+server/config.json
+server/tls/
+server/ca.crt
+server/ca.key
+server/server.crt
+server/server.key
+host/relay.json
+*.pem.key
+*.key
+
+# 日志与临时文件
+*.log
+*.err
+*.tmp
+_scratch/
+
+*.spec
