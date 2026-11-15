@@ -448,7 +448,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--port", type=int, default=None, help=f"UDP 端口，默认 {DEFAULT_PORT}")
     p.add_argument("--scan", action="store_true", help="自动发现局域网设备并选择连接")
     p.add_argument("--peer", help="直接连接设备，格式 IP[:端口]，端口默认 8766")
-    p.add_argument("--relay", help="广域网中继 host[:端口]，例如 101.96.204.31:8790")
+    p.add_argument("--relay", help="广域网中继 host[:端口]，例如 relay.example.com:8790")
     p.add_argument("--relay-ca", help="中继 CA 证书路径（默认 ../server/ca.crt）")
     p.add_argument("--relay-key", help="中继客户端密钥")
     p.add_argument("--relay-device", help="中继上的设备 ID（默认选第一个在线的）")
