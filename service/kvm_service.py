@@ -1,4 +1,4 @@
-"""KVM-Wire SYSTEM 服务：在用户会话里以 SYSTEM 权限运行注入助手。
+﻿"""KVM-Wire SYSTEM 服务：在用户会话里以 SYSTEM 权限运行注入助手。
 
 普通用户进程无法向锁屏/UAC 的 Secure Desktop 注入 SendInput；
 服务以 SYSTEM 权限在活动控制台会话创建助手进程，助手跟随当前输入桌面
@@ -109,9 +109,9 @@ class KvmService(win32serviceutil.ServiceFramework):
             win32con.TOKEN_ALL_ACCESS,
             None,
             win32security.SecurityImpersonation,
-            win32con.TokenPrimary,
+            win32security.TokenPrimary,
         )
-        win32security.SetTokenInformation(token, win32con.TokenSessionId, session)
+        win32security.SetTokenInformation(token, win32security.TokenSessionId, session)
         si = win32process.STARTUPINFO()
         si.lpDesktop = "winsta0\\default"
         proc, thread, pid, _tid = win32process.CreateProcessAsUser(
@@ -163,3 +163,4 @@ if __name__ == "__main__":
         servicemanager.Initialize()
         servicemanager.PrepareToHostSingle(KvmService)
         servicemanager.StartServiceCtrlDispatcher()
+
