@@ -41,3 +41,7 @@ _scratch/
 *.spec
 
 kvm-wire.json
+
+dist-service/
+build-service/
+

@@ -108,9 +108,12 @@ class KvmAgent:
     def _make_injector(self):
         if sys.platform != "win32":
             raise SystemExit("当前注入端只支持 Windows；在其它系统请用 --dry-run 查看事件。")
-        from wininject import WindowsInjector
+        import os
 
-        return WindowsInjector(mouse_mode=self.cfg.mouse_mode)
+        from wininject import SecureDesktopInjector, WindowsInjector
+
+        cls = SecureDesktopInjector if os.environ.get("KVM_SECURE_DESKTOP") == "1" else WindowsInjector
+        return cls(mouse_mode=self.cfg.mouse_mode)
 
     def _next_seq(self) -> int:
         self._seq = (self._seq + 1) & 0xFFFF

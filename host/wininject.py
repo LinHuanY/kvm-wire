@@ -260,3 +260,40 @@ class WindowsInjector:
         if steps == 0:
             return True
         return self._send([self._mouse_input(0, 0, (steps * 120) & 0xFFFFFFFF, MOUSEEVENTF_HWHEEL)])
+
+
+class SecureDesktopInjector(WindowsInjector):
+    """以 SYSTEM 权限运行在用户会话时，跟随当前输入桌面（含锁屏 Winlogon）。
+
+    普通用户进程只能注入 Default 桌面；服务模式必须切到当前输入桌面，
+    否则锁屏/UAC 时 SendInput 会被系统丢弃。
+    """
+
+    DESKTOP_ALL = 0x10000000  # GENERIC_ALL
+    DESKTOP_SWITCH = 0x0100
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._desk = None
+
+    def _ensure_input_desktop(self) -> None:
+        h = user32.OpenInputDesktop(0, False, self.DESKTOP_ALL)
+        if not h:
+            h = user32.OpenInputDesktop(0, False, self.DESKTOP_SWITCH)
+        if not h:
+            return
+        if h == self._desk:
+            return
+        if user32.SetThreadDesktop(h):
+            if self._desk:
+                user32.CloseDesktop(self._desk)
+            self._desk = h
+        else:
+            user32.CloseDesktop(h)
+
+    def _send(self, inputs):
+        try:
+            self._ensure_input_desktop()
+        except Exception:  # noqa: BLE001
+            pass
+        return super()._send(inputs)
