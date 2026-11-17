@@ -1,4 +1,4 @@
-# 构建 SYSTEM 服务
+﻿# 构建 SYSTEM 服务
 # 用法: powershell -ExecutionPolicy Bypass -File packaging\build_service.ps1
 $ErrorActionPreference = "Stop"
 $root = Split-Path $PSScriptRoot -Parent

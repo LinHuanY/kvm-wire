@@ -14,7 +14,7 @@ param(
 $ErrorActionPreference = "Stop"
 $principal = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
 if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-    throw "请右键“以管理员身份运行”PowerShell，再执行此脚本"
+    throw "请右键「以管理员身份运行」PowerShell，再执行此脚本"
 }
 
 $root = Split-Path $PSScriptRoot -Parent

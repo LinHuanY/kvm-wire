@@ -1,8 +1,8 @@
-# 卸载 KVM-Wire SYSTEM 服务（需管理员）
+﻿# 卸载 KVM-Wire SYSTEM 服务（需管理员）
 $ErrorActionPreference = "Stop"
 $principal = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
 if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-    throw "请右键“以管理员身份运行”PowerShell"
+    throw "请右键「以管理员身份运行」PowerShell"
 }
 
 $installDir = Join-Path $env:ProgramFiles "KVM-Wire-Service"
